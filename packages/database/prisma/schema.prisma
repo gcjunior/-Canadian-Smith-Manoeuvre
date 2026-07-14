@@ -1,0 +1,857 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum StrategyState {
+  DRAFT
+  ACTIVE
+  PAUSED
+  CLOSED
+}
+
+enum FinancialAccountKind {
+  MORTGAGE
+  HELOC
+  BANK_OPERATING
+  BROKERAGE_CASH
+  BROKERAGE_POSITION
+}
+
+enum FinancialProviderType {
+  BANK
+  BROKERAGE
+}
+
+enum BrokerageRegistrationType {
+  NON_REGISTERED
+}
+
+enum MonthlyConversionCycleState {
+  SCHEDULED
+  WAITING_FOR_MORTGAGE
+  WAITING_FOR_HELOC
+  HELOC_DRAW_PENDING
+  HELOC_DRAW_CONFIRMED
+  BROKERAGE_TRANSFER_PENDING
+  BROKERAGE_FUNDED
+  ORDER_PENDING
+  ORDER_FILLED
+  RECONCILING
+  COMPLETED
+  PAUSED
+  FAILED
+}
+
+enum MoneyMovementState {
+  REQUESTED
+  PENDING
+  SETTLED
+  FAILED
+  UNKNOWN
+  REVERSED
+}
+
+enum MoneyMovementType {
+  HELOC_DRAW
+  HELOC_TO_BROKERAGE_TRANSFER
+  BROKERAGE_DEPOSIT
+  INTEREST_BANK_DEBIT
+  OTHER
+}
+
+enum InvestmentOrderState {
+  CREATED
+  SUBMITTED
+  PARTIALLY_FILLED
+  FILLED
+  CANCELLED
+  REJECTED
+  UNKNOWN
+}
+
+enum InvestmentOrderSide {
+  BUY
+  SELL
+}
+
+enum MortgagePaymentState {
+  PENDING
+  SETTLED
+  FAILED
+  CANCELLED
+}
+
+enum HelocInterestChargeState {
+  PENDING
+  POSTED
+  FAILED
+}
+
+enum HelocInterestPaymentState {
+  PENDING
+  SETTLED
+  FAILED
+}
+
+enum ReconciliationState {
+  PENDING
+  PASSED
+  FAILED
+}
+
+enum ReconciliationItemResult {
+  PASS
+  FAIL
+  WARN
+}
+
+enum IdempotencyRecordState {
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
+enum OperationalExceptionSeverity {
+  INFO
+  WARNING
+  ERROR
+  CRITICAL
+}
+
+enum OperationalExceptionState {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+enum WorkflowReferenceType {
+  MONTHLY_CONVERSION
+  HELOC_INTEREST
+  OTHER
+}
+
+enum AuditActorType {
+  USER
+  SYSTEM
+  WORKER
+  WEBHOOK
+  OPERATOR
+}
+
+enum LedgerEntryDirection {
+  DEBIT
+  CREDIT
+}
+
+// ---------------------------------------------------------------------------
+// Identity / tenancy
+// ---------------------------------------------------------------------------
+
+model Tenant {
+  id        String   @id @default(uuid()) @db.Uuid
+  slug      String   @unique
+  name      String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  version   Int      @default(1)
+
+  users                  User[]
+  connections            FinancialConnection[]
+  accounts               FinancialAccount[]
+  strategies             Strategy[]
+  cycles                 MonthlyConversionCycle[]
+  ledgerEntries          LedgerEntry[]
+  idempotencyRecords     IdempotencyRecord[]
+  webhookEvents          ProviderWebhookEvent[]
+  operationalExceptions  OperationalException[]
+  auditDocuments         AuditDocument[]
+  workflowReferences     WorkflowReference[]
+  reconciliations        Reconciliation[]
+  moneyMovements         MoneyMovement[]
+  mortgages              Mortgage[]
+  helocs                 Heloc[]
+  brokerageAccounts      BrokerageAccount[]
+  ordinaryBankAccounts   OrdinaryBankAccount[]
+  investmentPolicies     StrategyInvestmentPolicy[]
+  mortgagePayments       MortgagePayment[]
+  helocCreditEvents      HelocCreditEvent[]
+  helocInterestCharges   HelocInterestCharge[]
+  helocInterestPayments  HelocInterestPayment[]
+  brokerageDeposits      BrokerageDeposit[]
+  investmentOrders       InvestmentOrder[]
+  investmentFills        InvestmentFill[]
+  reconciliationItems    ReconciliationItem[]
+
+  @@map("tenants")
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  email        String
+  displayName  String   @map("display_name")
+  passwordHash String?  @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  version      Int      @default(1)
+
+  tenant      Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  connections FinancialConnection[]
+  accounts    FinancialAccount[]
+  strategies  Strategy[]
+
+  @@unique([tenantId, email])
+  @@unique([id, tenantId])
+  @@index([tenantId])
+  @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// Provider connections & accounts
+// ---------------------------------------------------------------------------
+
+model FinancialConnection {
+  id                   String                @id @default(uuid()) @db.Uuid
+  tenantId             String                @map("tenant_id") @db.Uuid
+  userId               String                @map("user_id") @db.Uuid
+  providerType         FinancialProviderType @map("provider_type")
+  providerConnectionId String                @map("provider_connection_id")
+  displayAlias         String                @map("display_alias")
+  /// Never store full real account numbers or access tokens here.
+  metadataRedacted     Json?                 @map("metadata_redacted")
+  createdAt            DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+  version              Int                   @default(1)
+
+  tenant   Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user     User               @relation(fields: [userId, tenantId], references: [id, tenantId], onDelete: Cascade)
+  accounts FinancialAccount[]
+
+  @@unique([tenantId, providerType, providerConnectionId])
+  @@unique([id, tenantId])
+  @@index([tenantId, userId])
+  @@map("financial_connections")
+}
+
+model FinancialAccount {
+  id                String               @id @default(uuid()) @db.Uuid
+  tenantId          String               @map("tenant_id") @db.Uuid
+  userId            String               @map("user_id") @db.Uuid
+  connectionId      String               @map("connection_id") @db.Uuid
+  kind              FinancialAccountKind
+  currencyCode      String               @default("CAD") @map("currency_code") @db.Char(3)
+  displayAlias      String               @map("display_alias")
+  providerAccountId String               @map("provider_account_id")
+  /// Masked tip only (e.g. last 4). Never store full PANs.
+  accountNumberLast4 String?             @map("account_number_last4") @db.VarChar(4)
+  createdAt         DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+  version           Int                  @default(1)
+
+  tenant     Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user       User                @relation(fields: [userId, tenantId], references: [id, tenantId], onDelete: Cascade)
+  connection FinancialConnection @relation(fields: [connectionId, tenantId], references: [id, tenantId], onDelete: Cascade)
+
+  mortgage             Mortgage?
+  heloc                Heloc?
+  brokerageAccount     BrokerageAccount?
+  ordinaryBankAccount  OrdinaryBankAccount?
+  ledgerEntries        LedgerEntry[]
+
+  strategiesAsMortgage  Strategy[] @relation("StrategyMortgageAccount")
+  strategiesAsHeloc     Strategy[] @relation("StrategyHelocAccount")
+  strategiesAsBank      Strategy[] @relation("StrategyBankAccount")
+  strategiesAsBrokerage Strategy[] @relation("StrategyBrokerageAccount")
+
+  @@unique([tenantId, connectionId, providerAccountId])
+  @@unique([id, tenantId])
+  @@unique([id, tenantId, userId])
+  @@index([tenantId, userId])
+  @@index([tenantId, kind])
+  @@map("financial_accounts")
+}
+
+model Mortgage {
+  id                         String   @id @default(uuid()) @db.Uuid
+  tenantId                   String   @map("tenant_id") @db.Uuid
+  accountId                  String   @unique @map("account_id") @db.Uuid
+  outstandingPrincipalCents  BigInt   @map("outstanding_principal_cents")
+  contractualPaymentCents    BigInt   @map("contractual_payment_cents")
+  expectedPaymentDay         Int      @map("expected_payment_day")
+  createdAt                  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  version                    Int      @default(1)
+
+  tenant   Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  account  FinancialAccount @relation(fields: [accountId, tenantId], references: [id, tenantId], onDelete: Cascade)
+  payments MortgagePayment[]
+
+  @@unique([accountId, tenantId])
+  @@unique([id, tenantId])
+  @@index([tenantId])
+  @@map("mortgages")
+}
+
+model Heloc {
+  id                    String   @id @default(uuid()) @db.Uuid
+  tenantId              String   @map("tenant_id") @db.Uuid
+  accountId             String   @unique @map("account_id") @db.Uuid
+  creditLimitCents      BigInt   @map("credit_limit_cents")
+  balanceOwedCents      BigInt   @map("balance_owed_cents")
+  availableCreditCents  BigInt   @map("available_credit_cents")
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  version               Int      @default(1)
+
+  tenant       Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  account      FinancialAccount  @relation(fields: [accountId, tenantId], references: [id, tenantId], onDelete: Cascade)
+  creditEvents HelocCreditEvent[]
+  interestCharges HelocInterestCharge[]
+
+  @@unique([accountId, tenantId])
+  @@unique([id, tenantId])
+  @@index([tenantId])
+  @@map("helocs")
+}
+
+model BrokerageAccount {
+  id               String                     @id @default(uuid()) @db.Uuid
+  tenantId         String                     @map("tenant_id") @db.Uuid
+  accountId        String                     @unique @map("account_id") @db.Uuid
+  registrationType BrokerageRegistrationType  @default(NON_REGISTERED) @map("registration_type")
+  createdAt        DateTime                   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(3)
+  version          Int                        @default(1)
+
+  tenant   Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  account  FinancialAccount @relation(fields: [accountId, tenantId], references: [id, tenantId], onDelete: Cascade)
+  deposits BrokerageDeposit[]
+  orders   InvestmentOrder[]
+
+  @@unique([accountId, tenantId])
+  @@unique([id, tenantId])
+  @@index([tenantId])
+  @@map("brokerage_accounts")
+}
+
+model OrdinaryBankAccount {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  accountId String   @unique @map("account_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  version   Int      @default(1)
+
+  tenant           Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  account          FinancialAccount       @relation(fields: [accountId, tenantId], references: [id, tenantId], onDelete: Cascade)
+  interestPayments HelocInterestPayment[]
+
+  @@unique([accountId, tenantId])
+  @@unique([id, tenantId])
+  @@index([tenantId])
+  @@map("ordinary_bank_accounts")
+}
+
+// ---------------------------------------------------------------------------
+// Strategy
+// ---------------------------------------------------------------------------
+
+model Strategy {
+  id                 String        @id @default(uuid()) @db.Uuid
+  tenantId           String        @map("tenant_id") @db.Uuid
+  userId             String        @map("user_id") @db.Uuid
+  name               String
+  state              StrategyState @default(DRAFT)
+  /// Canadian IANA timezone, e.g. America/Toronto
+  timezone           String
+  expectedPaymentDay Int           @map("expected_payment_day")
+  mortgageAccountId  String        @map("mortgage_account_id") @db.Uuid
+  helocAccountId     String        @map("heloc_account_id") @db.Uuid
+  bankAccountId      String        @map("bank_account_id") @db.Uuid
+  brokerageAccountId String        @map("brokerage_account_id") @db.Uuid
+  pauseReason        String?       @map("pause_reason")
+  createdAt          DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+  version            Int           @default(1)
+
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user     User   @relation(fields: [userId, tenantId], references: [id, tenantId], onDelete: Cascade)
+
+  // Same-tenant + same-user account ownership via composite FKs.
+  // Account kind correctness is enforced in domain validation (see docs/data-model-invariants.md).
+  mortgageAccount  FinancialAccount @relation("StrategyMortgageAccount", fields: [mortgageAccountId, tenantId, userId], references: [id, tenantId, userId])
+  helocAccount     FinancialAccount @relation("StrategyHelocAccount", fields: [helocAccountId, tenantId, userId], references: [id, tenantId, userId])
+  bankAccount      FinancialAccount @relation("StrategyBankAccount", fields: [bankAccountId, tenantId, userId], references: [id, tenantId, userId])
+  brokerageAccount FinancialAccount @relation("StrategyBrokerageAccount", fields: [brokerageAccountId, tenantId, userId], references: [id, tenantId, userId])
+
+  investmentPolicy   StrategyInvestmentPolicy?
+  cycles             MonthlyConversionCycle[]
+  workflowReferences WorkflowReference[]
+  reconciliations    Reconciliation[]
+
+  @@unique([id, tenantId])
+  @@index([tenantId, userId])
+  @@index([tenantId, state])
+  @@map("strategies")
+}
+
+model StrategyInvestmentPolicy {
+  id                     String   @id @default(uuid()) @db.Uuid
+  tenantId               String   @map("tenant_id") @db.Uuid
+  strategyId             String   @unique @map("strategy_id") @db.Uuid
+  symbol                 String
+  exchange               String   @default("TSX")
+  userMonthlyCapCents    BigInt   @map("user_monthly_cap_cents")
+  allowFractionalShares  Boolean  @default(true) @map("allow_fractional_shares")
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  version                Int      @default(1)
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  strategy Strategy @relation(fields: [strategyId, tenantId], references: [id, tenantId], onDelete: Cascade)
+
+  @@unique([strategyId, tenantId])
+  @@unique([id, tenantId])
+  @@index([tenantId])
+  @@map("strategy_investment_policies")
+}
+
+// ---------------------------------------------------------------------------
+// Bank / HELOC domain events
+// ---------------------------------------------------------------------------
+
+model MortgagePayment {
+  id                   String                @id @default(uuid()) @db.Uuid
+  tenantId             String                @map("tenant_id") @db.Uuid
+  mortgageId           String                @map("mortgage_id") @db.Uuid
+  providerPaymentId    String                @map("provider_payment_id")
+  paymentPeriod        String                @map("payment_period")
+  totalAmountCents     BigInt                @map("total_amount_cents")
+  principalAmountCents BigInt                @map("principal_amount_cents")
+  interestAmountCents  BigInt                @map("interest_amount_cents")
+  state                MortgagePaymentState  @default(PENDING)
+  paidAt               DateTime?             @map("paid_at") @db.Timestamptz(3)
+  settledAt            DateTime?             @map("settled_at") @db.Timestamptz(3)
+  createdAt            DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+  version              Int                   @default(1)
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  mortgage Mortgage @relation(fields: [mortgageId, tenantId], references: [id, tenantId], onDelete: Cascade)
+  cycles   MonthlyConversionCycle[]
+
+  @@unique([tenantId, providerPaymentId])
+  @@unique([id, tenantId])
+  @@index([tenantId, mortgageId, paymentPeriod])
+  @@map("mortgage_payments")
+}
+
+model HelocCreditEvent {
+  id                     String   @id @default(uuid()) @db.Uuid
+  tenantId               String   @map("tenant_id") @db.Uuid
+  helocId                String   @map("heloc_id") @db.Uuid
+  providerEventId        String   @map("provider_event_id")
+  availableCreditCents   BigInt   @map("available_credit_cents")
+  creditDeltaCents       BigInt   @map("credit_delta_cents")
+  relatedPaymentPeriod   String?  @map("related_payment_period")
+  observedAt             DateTime @map("observed_at") @db.Timestamptz(3)
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  heloc  Heloc  @relation(fields: [helocId, tenantId], references: [id, tenantId], onDelete: Cascade)
+
+  @@unique([tenantId, providerEventId])
+  @@unique([id, tenantId])
+  @@index([tenantId, helocId, relatedPaymentPeriod])
+  @@map("heloc_credit_events")
+}
+
+model HelocInterestCharge {
+  id                String                   @id @default(uuid()) @db.Uuid
+  tenantId          String                   @map("tenant_id") @db.Uuid
+  helocId           String                   @map("heloc_id") @db.Uuid
+  providerChargeId  String                   @map("provider_charge_id")
+  interestPeriod    String                   @map("interest_period")
+  amountCents       BigInt                   @map("amount_cents")
+  state             HelocInterestChargeState @default(PENDING)
+  postedAt          DateTime?                @map("posted_at") @db.Timestamptz(3)
+  createdAt         DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(3)
+  version           Int                      @default(1)
+
+  tenant  Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  heloc   Heloc                 @relation(fields: [helocId, tenantId], references: [id, tenantId], onDelete: Cascade)
+  payment HelocInterestPayment?
+
+  @@unique([tenantId, providerChargeId])
+  @@unique([id, tenantId])
+  @@index([tenantId, helocId, interestPeriod])
+  @@map("heloc_interest_charges")
+}
+
+model HelocInterestPayment {
+  id                     String                     @id @default(uuid()) @db.Uuid
+  tenantId               String                     @map("tenant_id") @db.Uuid
+  chargeId               String                     @unique @map("charge_id") @db.Uuid
+  ordinaryBankAccountId  String                     @map("ordinary_bank_account_id") @db.Uuid
+  providerPaymentId      String                     @map("provider_payment_id")
+  amountCents            BigInt                     @map("amount_cents")
+  state                  HelocInterestPaymentState  @default(PENDING)
+  settledAt              DateTime?                  @map("settled_at") @db.Timestamptz(3)
+  createdAt              DateTime                   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(3)
+  version                Int                        @default(1)
+
+  tenant              Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  charge              HelocInterestCharge @relation(fields: [chargeId, tenantId], references: [id, tenantId], onDelete: Cascade)
+  ordinaryBankAccount OrdinaryBankAccount @relation(fields: [ordinaryBankAccountId, tenantId], references: [id, tenantId], onDelete: Restrict)
+
+  @@unique([chargeId, tenantId])
+  @@unique([tenantId, providerPaymentId])
+  @@unique([id, tenantId])
+  @@index([tenantId, ordinaryBankAccountId])
+  @@map("heloc_interest_payments")
+}
+
+// ---------------------------------------------------------------------------
+// Monthly conversion + money movement + investment
+// ---------------------------------------------------------------------------
+
+model MonthlyConversionCycle {
+  id                      String                       @id @default(uuid()) @db.Uuid
+  tenantId                String                       @map("tenant_id") @db.Uuid
+  strategyId              String                       @map("strategy_id") @db.Uuid
+  paymentPeriod           String                       @map("payment_period")
+  state                   MonthlyConversionCycleState  @default(SCHEDULED)
+  mortgagePaymentId       String?                      @map("mortgage_payment_id") @db.Uuid
+  principalRepaidCents    BigInt?                      @map("principal_repaid_cents")
+  newlyAvailableCreditCents BigInt?                    @map("newly_available_credit_cents")
+  drawAmountCents         BigInt?                      @map("draw_amount_cents")
+  correlationId           String                       @map("correlation_id") @db.Uuid
+  failureCode             String?                      @map("failure_code")
+  failureMessage          String?                      @map("failure_message")
+  startedAt               DateTime?                    @map("started_at") @db.Timestamptz(3)
+  completedAt             DateTime?                    @map("completed_at") @db.Timestamptz(3)
+  createdAt               DateTime                     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt               DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  version                 Int                          @default(1)
+
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  strategy        Strategy         @relation(fields: [strategyId, tenantId], references: [id, tenantId], onDelete: Cascade)
+  mortgagePayment MortgagePayment? @relation(fields: [mortgagePaymentId, tenantId], references: [id, tenantId], onDelete: Restrict)
+
+  moneyMovements     MoneyMovement[]
+  brokerageDeposits  BrokerageDeposit[]
+  investmentOrders   InvestmentOrder[]
+  reconciliations    Reconciliation[]
+  workflowReferences WorkflowReference[]
+  ledgerEntries      LedgerEntry[]
+
+  @@unique([tenantId, strategyId, paymentPeriod])
+  @@unique([id, tenantId])
+  @@index([tenantId, strategyId, state])
+  @@index([tenantId, correlationId])
+  @@map("monthly_conversion_cycles")
+}
+
+model MoneyMovement {
+  id                    String             @id @default(uuid()) @db.Uuid
+  tenantId              String             @map("tenant_id") @db.Uuid
+  cycleId               String?            @map("cycle_id") @db.Uuid
+  type                  MoneyMovementType
+  state                 MoneyMovementState @default(REQUESTED)
+  amountCents           BigInt             @map("amount_cents")
+  currencyCode          String             @default("CAD") @map("currency_code") @db.Char(3)
+  sourceAccountId       String?            @map("source_account_id") @db.Uuid
+  destinationAccountId  String?            @map("destination_account_id") @db.Uuid
+  providerTransactionId String?            @map("provider_transaction_id")
+  idempotencyKey        String             @map("idempotency_key")
+  correlationId         String             @map("correlation_id") @db.Uuid
+  failureCode           String?            @map("failure_code")
+  requestedAt           DateTime           @default(now()) @map("requested_at") @db.Timestamptz(3)
+  settledAt             DateTime?          @map("settled_at") @db.Timestamptz(3)
+  createdAt             DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+  version               Int                @default(1)
+
+  tenant Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  cycle  MonthlyConversionCycle? @relation(fields: [cycleId, tenantId], references: [id, tenantId], onDelete: Restrict)
+
+  brokerageDeposit BrokerageDeposit?
+
+  @@unique([tenantId, idempotencyKey])
+  @@unique([tenantId, type, providerTransactionId])
+  @@unique([id, tenantId])
+  @@index([tenantId, cycleId])
+  @@index([tenantId, state])
+  @@map("money_movements")
+}
+
+model BrokerageDeposit {
+  id                    String             @id @default(uuid()) @db.Uuid
+  tenantId              String             @map("tenant_id") @db.Uuid
+  cycleId               String?            @map("cycle_id") @db.Uuid
+  brokerageAccountId    String             @map("brokerage_account_id") @db.Uuid
+  moneyMovementId       String             @unique @map("money_movement_id") @db.Uuid
+  amountCents           BigInt             @map("amount_cents")
+  state                 MoneyMovementState @default(REQUESTED)
+  providerDepositId     String             @map("provider_deposit_id")
+  settledAt             DateTime?          @map("settled_at") @db.Timestamptz(3)
+  createdAt             DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+  version               Int                @default(1)
+
+  tenant           Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  cycle            MonthlyConversionCycle? @relation(fields: [cycleId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  brokerageAccount BrokerageAccount        @relation(fields: [brokerageAccountId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  moneyMovement    MoneyMovement           @relation(fields: [moneyMovementId, tenantId], references: [id, tenantId], onDelete: Cascade)
+
+  @@unique([moneyMovementId, tenantId])
+  @@unique([tenantId, providerDepositId])
+  @@unique([id, tenantId])
+  @@index([tenantId, cycleId])
+  @@map("brokerage_deposits")
+}
+
+model InvestmentOrder {
+  id                 String               @id @default(uuid()) @db.Uuid
+  tenantId           String               @map("tenant_id") @db.Uuid
+  cycleId            String?              @map("cycle_id") @db.Uuid
+  brokerageAccountId String               @map("brokerage_account_id") @db.Uuid
+  providerOrderId    String?              @map("provider_order_id")
+  idempotencyKey     String               @map("idempotency_key")
+  symbol             String
+  side               InvestmentOrderSide  @default(BUY)
+  state              InvestmentOrderState @default(CREATED)
+  /// Notional CAD cents requested for marketable fractional buys.
+  notionalCents      BigInt               @map("notional_cents")
+  /// Requested quantity when limit/qty orders are used (decimal string precision).
+  quantity           Decimal?             @map("quantity") @db.Decimal(28, 10)
+  limitPrice         Decimal?             @map("limit_price") @db.Decimal(28, 10)
+  correlationId      String               @map("correlation_id") @db.Uuid
+  submittedAt        DateTime?            @map("submitted_at") @db.Timestamptz(3)
+  filledAt           DateTime?            @map("filled_at") @db.Timestamptz(3)
+  createdAt          DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+  version            Int                  @default(1)
+
+  tenant           Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  cycle            MonthlyConversionCycle? @relation(fields: [cycleId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  brokerageAccount BrokerageAccount        @relation(fields: [brokerageAccountId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  fills            InvestmentFill[]
+
+  @@unique([tenantId, idempotencyKey])
+  @@unique([tenantId, providerOrderId])
+  @@unique([id, tenantId])
+  @@index([tenantId, cycleId])
+  @@index([tenantId, state])
+  @@map("investment_orders")
+}
+
+model InvestmentFill {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  orderId         String   @map("order_id") @db.Uuid
+  providerFillId  String   @map("provider_fill_id")
+  quantity        Decimal  @db.Decimal(28, 10)
+  price           Decimal  @db.Decimal(28, 10)
+  amountCents     BigInt   @map("amount_cents")
+  filledAt        DateTime @map("filled_at") @db.Timestamptz(3)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  order  InvestmentOrder @relation(fields: [orderId, tenantId], references: [id, tenantId], onDelete: Cascade)
+
+  @@unique([tenantId, providerFillId])
+  @@unique([id, tenantId])
+  @@index([tenantId, orderId])
+  @@map("investment_fills")
+}
+
+// ---------------------------------------------------------------------------
+// Ledger, reconciliation, idempotency, webhooks, ops, audit, workflow refs
+// ---------------------------------------------------------------------------
+
+model LedgerEntry {
+  id               String               @id @default(uuid()) @db.Uuid
+  tenantId         String               @map("tenant_id") @db.Uuid
+  accountId        String               @map("account_id") @db.Uuid
+  cycleId          String?              @map("cycle_id") @db.Uuid
+  /// Stable business identity for duplicate prevention (append-only).
+  businessEventId  String               @map("business_event_id")
+  direction        LedgerEntryDirection
+  amountCents      BigInt               @map("amount_cents")
+  currencyCode     String               @default("CAD") @map("currency_code") @db.Char(3)
+  correlationId    String               @map("correlation_id") @db.Uuid
+  narrative        String
+  createdAt        DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant  Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  account FinancialAccount        @relation(fields: [accountId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  cycle   MonthlyConversionCycle? @relation(fields: [cycleId, tenantId], references: [id, tenantId], onDelete: Restrict)
+
+  @@unique([tenantId, businessEventId])
+  @@unique([id, tenantId])
+  @@index([tenantId, accountId, createdAt])
+  @@index([tenantId, cycleId])
+  @@index([tenantId, correlationId])
+  @@map("ledger_entries")
+}
+
+model Reconciliation {
+  id           String               @id @default(uuid()) @db.Uuid
+  tenantId     String               @map("tenant_id") @db.Uuid
+  strategyId   String               @map("strategy_id") @db.Uuid
+  cycleId      String?              @map("cycle_id") @db.Uuid
+  state        ReconciliationState  @default(PENDING)
+  correlationId String              @map("correlation_id") @db.Uuid
+  summary      String?
+  completedAt  DateTime?            @map("completed_at") @db.Timestamptz(3)
+  createdAt    DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+  version      Int                  @default(1)
+
+  tenant  Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  strategy Strategy               @relation(fields: [strategyId, tenantId], references: [id, tenantId], onDelete: Cascade)
+  cycle   MonthlyConversionCycle? @relation(fields: [cycleId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  items   ReconciliationItem[]
+
+  @@unique([id, tenantId])
+  @@index([tenantId, strategyId])
+  @@index([tenantId, cycleId])
+  @@map("reconciliations")
+}
+
+model ReconciliationItem {
+  id                String                   @id @default(uuid()) @db.Uuid
+  tenantId          String                   @map("tenant_id") @db.Uuid
+  reconciliationId  String                   @map("reconciliation_id") @db.Uuid
+  code              String
+  result            ReconciliationItemResult
+  expectedValue     String?                  @map("expected_value")
+  actualValue       String?                  @map("actual_value")
+  detail            String?
+  createdAt         DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  reconciliation Reconciliation @relation(fields: [reconciliationId, tenantId], references: [id, tenantId], onDelete: Cascade)
+
+  @@unique([id, tenantId])
+  @@index([tenantId, reconciliationId])
+  @@map("reconciliation_items")
+}
+
+model IdempotencyRecord {
+  id             String                 @id @default(uuid()) @db.Uuid
+  tenantId       String                 @map("tenant_id") @db.Uuid
+  scope          String
+  key            String
+  requestHash    String                 @map("request_hash")
+  state          IdempotencyRecordState @default(IN_PROGRESS)
+  responseBody   Json?                  @map("response_body")
+  createdAt      DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
+  version        Int                    @default(1)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, scope, key])
+  @@unique([id, tenantId])
+  @@index([tenantId, scope, state])
+  @@map("idempotency_records")
+}
+
+model ProviderWebhookEvent {
+  id              String    @id @default(uuid()) @db.Uuid
+  tenantId        String    @map("tenant_id") @db.Uuid
+  provider        String
+  providerEventId String    @map("provider_event_id")
+  eventType       String    @map("event_type")
+  payloadRedacted Json      @map("payload_redacted")
+  receivedAt      DateTime  @default(now()) @map("received_at") @db.Timestamptz(3)
+  processedAt     DateTime? @map("processed_at") @db.Timestamptz(3)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, provider, providerEventId])
+  @@unique([id, tenantId])
+  @@index([tenantId, provider, eventType])
+  @@map("provider_webhook_events")
+}
+
+model OperationalException {
+  id           String                        @id @default(uuid()) @db.Uuid
+  tenantId     String                        @map("tenant_id") @db.Uuid
+  strategyId   String?                       @map("strategy_id") @db.Uuid
+  cycleId      String?                       @map("cycle_id") @db.Uuid
+  code         String
+  severity     OperationalExceptionSeverity  @default(ERROR)
+  state        OperationalExceptionState     @default(OPEN)
+  message      String
+  details      Json?
+  correlationId String?                      @map("correlation_id") @db.Uuid
+  createdAt    DateTime                      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime                      @updatedAt @map("updated_at") @db.Timestamptz(3)
+  version      Int                           @default(1)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([id, tenantId])
+  @@index([tenantId, state, severity])
+  @@index([tenantId, strategyId])
+  @@map("operational_exceptions")
+}
+
+model AuditDocument {
+  id            String        @id @default(uuid()) @db.Uuid
+  tenantId      String        @map("tenant_id") @db.Uuid
+  actorType     AuditActorType @map("actor_type")
+  actorId       String?       @map("actor_id")
+  action        String
+  resourceType  String        @map("resource_type")
+  resourceId    String?       @map("resource_id") @db.Uuid
+  correlationId String?       @map("correlation_id") @db.Uuid
+  payloadRedacted Json        @map("payload_redacted")
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([id, tenantId])
+  @@index([tenantId, resourceType, resourceId])
+  @@index([tenantId, createdAt])
+  @@map("audit_documents")
+}
+
+model WorkflowReference {
+  id             String                @id @default(uuid()) @db.Uuid
+  tenantId       String                @map("tenant_id") @db.Uuid
+  strategyId     String                @map("strategy_id") @db.Uuid
+  cycleId        String?               @map("cycle_id") @db.Uuid
+  type           WorkflowReferenceType
+  temporalWorkflowId String            @map("temporal_workflow_id")
+  temporalRunId  String?               @map("temporal_run_id")
+  temporalNamespace String             @default("default") @map("temporal_namespace")
+  createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant   Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  strategy Strategy                @relation(fields: [strategyId, tenantId], references: [id, tenantId], onDelete: Cascade)
+  cycle    MonthlyConversionCycle? @relation(fields: [cycleId, tenantId], references: [id, tenantId], onDelete: Restrict)
+
+  @@unique([tenantId, temporalWorkflowId])
+  @@unique([id, tenantId])
+  @@index([tenantId, strategyId, type])
+  @@index([tenantId, cycleId])
+  @@map("workflow_references")
+}
+

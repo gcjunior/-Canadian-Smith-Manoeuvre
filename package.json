@@ -1,0 +1,46 @@
+{
+  "name": "canadian-smith-manoeuvre",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.4",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "pnpm -r --if-present run build",
+    "dev": "pnpm -r --parallel --if-present run dev",
+    "typecheck": "pnpm --filter @csm/contracts build && pnpm --filter @csm/observability build && pnpm --filter @csm/domain build && pnpm --filter @csm/database build && pnpm --filter @csm/bank-client build && pnpm --filter @csm/brokerage-client build && pnpm --filter @csm/temporal-workflows build && pnpm --filter @csm/temporal-activities build && pnpm --filter @csm/test-support build && pnpm -r --if-present run typecheck",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "pnpm --filter @csm/contracts build && pnpm --filter @csm/observability build && pnpm --filter @csm/domain build && pnpm --filter @csm/database build && vitest run",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:generate": "pnpm --filter @csm/database generate",
+    "db:migrate": "pnpm --filter @csm/database migrate:dev",
+    "db:migrate:deploy": "pnpm --filter @csm/database migrate:deploy",
+    "db:studio": "pnpm --filter @csm/database studio",
+    "clean": "pnpm -r --if-present run clean && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.30.1",
+    "@types/node": "22.16.0",
+    "eslint": "9.30.1",
+    "eslint-config-prettier": "10.1.5",
+    "prettier": "3.6.2",
+    "typescript": "5.8.3",
+    "typescript-eslint": "8.35.1",
+    "vitest": "3.2.4"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "@prisma/client",
+      "@prisma/engines",
+      "prisma",
+      "sharp",
+      "@swc/core",
+      "@temporalio/core-bridge",
+      "protobufjs"
+    ]
+  }
+}

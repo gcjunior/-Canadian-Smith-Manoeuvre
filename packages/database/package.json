@@ -1,0 +1,43 @@
+{
+  "name": "@csm/database",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./repositories": {
+      "types": "./dist/repositories/index.d.ts",
+      "import": "./dist/repositories/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "prisma"
+  ],
+  "scripts": {
+    "build": "pnpm generate && tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist coverage",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "generate": "DATABASE_URL=\"${DATABASE_URL:-postgresql://smith:smith@localhost:5432/smith_manoeuvre?schema=public}\" prisma generate",
+    "migrate:dev": "DATABASE_URL=\"${DATABASE_URL:-postgresql://smith:smith@localhost:5432/smith_manoeuvre?schema=public}\" prisma migrate dev",
+    "migrate:deploy": "DATABASE_URL=\"${DATABASE_URL:-postgresql://smith:smith@localhost:5432/smith_manoeuvre?schema=public}\" prisma migrate deploy",
+    "studio": "DATABASE_URL=\"${DATABASE_URL:-postgresql://smith:smith@localhost:5432/smith_manoeuvre?schema=public}\" prisma studio",
+    "seed": "DATABASE_URL=\"${DATABASE_URL:-postgresql://smith:smith@localhost:5432/smith_manoeuvre?schema=public}\" tsx src/seed.ts"
+  },
+  "dependencies": {
+    "@csm/contracts": "workspace:*",
+    "@prisma/client": "6.11.1",
+    "@csm/domain": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "5.8.3",
+    "vitest": "3.2.4",
+    "prisma": "6.11.1",
+    "tsx": "4.20.3"
+  }
+}

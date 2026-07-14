@@ -1,0 +1,58 @@
+name: canadian-smith-manoeuvre-test
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: smith
+      POSTGRES_PASSWORD: smith
+      POSTGRES_DB: smith_manoeuvre_test
+    ports:
+      - '5433:5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U smith -d smith_manoeuvre_test']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  temporal:
+    image: temporalio/auto-setup:1.27.2
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: smith
+      POSTGRES_PWD: smith
+      POSTGRES_SEEDS: postgres
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+    ports:
+      - '7234:7233'
+    volumes:
+      - ./docker/temporal/dynamicconfig:/etc/temporal/config/dynamicconfig:ro
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'temporal operator cluster health --address temporal:7233 || tctl --address temporal:7233 cluster health',
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
+
+  migrate:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.migrate
+      args:
+        NODE_IMAGE: node:20.19.3-alpine3.21
+    environment:
+      DATABASE_URL: postgresql://smith:smith@postgres:5432/smith_manoeuvre_test?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'

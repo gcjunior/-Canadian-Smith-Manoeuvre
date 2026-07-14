@@ -1,0 +1,30 @@
+{
+  "name": "@csm/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist coverage",
+    "dev": "node --watch --import tsx src/main.ts",
+    "start": "node dist/main.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@csm/bank-client": "workspace:*",
+    "@csm/brokerage-client": "workspace:*",
+    "@csm/contracts": "workspace:*",
+    "@csm/database": "workspace:*",
+    "@csm/observability": "workspace:*",
+    "@csm/temporal-activities": "workspace:*",
+    "@csm/temporal-workflows": "workspace:*",
+    "@temporalio/worker": "1.11.8",
+    "@temporalio/client": "1.11.8"
+  },
+  "devDependencies": {
+    "tsx": "4.20.3",
+    "typescript": "5.8.3",
+    "vitest": "3.2.4"
+  }
+}
