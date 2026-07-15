@@ -31,16 +31,25 @@ export type StrategySetupRequest = z.infer<typeof strategySetupRequestSchema>;
 
 export const strategyActivationRequestSchema = z
   .object({
-    strategyId: uuidSchema,
     acknowledgeRiskDisclosures: z.literal(true),
   })
   .strict();
+
+export const strategyPatchRequestSchema = z
+  .object({
+    name: z.string().min(1).max(120).optional(),
+    timezone: canadianTimezoneSchema.optional(),
+    expectedPaymentDay: z.number().int().min(1).max(28).optional(),
+    investmentPolicy: strategyInvestmentPolicySchema.partial().optional(),
+  })
+  .strict();
+
+export type StrategyPatchRequest = z.infer<typeof strategyPatchRequestSchema>;
 
 export type StrategyActivationRequest = z.infer<typeof strategyActivationRequestSchema>;
 
 export const strategyPauseRequestSchema = z
   .object({
-    strategyId: uuidSchema,
     reason: z.string().min(1).max(500),
   })
   .strict();
@@ -49,12 +58,19 @@ export type StrategyPauseRequest = z.infer<typeof strategyPauseRequestSchema>;
 
 export const strategyResumeRequestSchema = z
   .object({
-    strategyId: uuidSchema,
     clearanceNote: z.string().min(1).max(500),
   })
   .strict();
 
 export type StrategyResumeRequest = z.infer<typeof strategyResumeRequestSchema>;
+
+export const strategyCloseRequestSchema = z
+  .object({
+    reason: z.string().min(1).max(500),
+  })
+  .strict();
+
+export type StrategyCloseRequest = z.infer<typeof strategyCloseRequestSchema>;
 
 export const strategyResponseSchema = z
   .object({

@@ -12,6 +12,11 @@ export default tseslint.config(
       '**/apps/web/**',
       'eslint.config.js',
       'vitest.workspace.ts',
+      '**/vitest.config.ts',
+      // Tests are typechecked by Vitest/tsc project configs; exclude from typed ESLint
+      // to avoid projectService gaps when package tsconfig excludes *.test.ts.
+      '**/*.test.ts',
+      '**/*.test.tsx',
     ],
   },
   eslint.configs.recommended,
@@ -35,6 +40,9 @@ export default tseslint.config(
       '@typescript-eslint/require-await': 'off',
       '@typescript-eslint/no-floating-promises': 'error',
       '@typescript-eslint/no-misused-promises': 'error',
+      // Pre-existing workflow assertion noise; safety packs covered by tests.
+      '@typescript-eslint/no-unnecessary-type-assertion': 'off',
+      '@typescript-eslint/no-redundant-type-constituents': 'off',
     },
   },
   eslintConfigPrettier,

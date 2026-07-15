@@ -104,6 +104,8 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       SERVICE_NAME: bank-simulator
       SERVICE_VERSION: ${SERVICE_VERSION:-0.0.0}
+      # Compose-local only — refuse defaults; must be length >= 32 (see packages/contracts env).
+      WEBHOOK_SIGNING_SECRET: ${WEBHOOK_SIGNING_SECRET:-compose-local-webhook-signing-secret-32b}
       HOST: 0.0.0.0
       PORT: 3002
     ports:
@@ -136,6 +138,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       SERVICE_NAME: brokerage-simulator
       SERVICE_VERSION: ${SERVICE_VERSION:-0.0.0}
+      WEBHOOK_SIGNING_SECRET: ${WEBHOOK_SIGNING_SECRET:-compose-local-webhook-signing-secret-32b}
       HOST: 0.0.0.0
       PORT: 3003
     ports:
@@ -164,7 +167,8 @@ services:
       args:
         NODE_IMAGE: node:20.19.3-alpine3.21
     environment:
-      NODE_ENV: production
+      # development unlocks /auth/dev-scenarios and /auth/dev-token for local UI login
+      NODE_ENV: development
       LOG_LEVEL: ${LOG_LEVEL:-info}
       SERVICE_NAME: api
       SERVICE_VERSION: ${SERVICE_VERSION:-0.0.0}
@@ -179,6 +183,8 @@ services:
       DEFAULT_TIMEZONE: ${DEFAULT_TIMEZONE:-America/Toronto}
       PLATFORM_MONTHLY_DRAW_CAP_CENTS: ${PLATFORM_MONTHLY_DRAW_CAP_CENTS:-500000}
       STARTUP_DEPENDENCY_TIMEOUT_MS: ${STARTUP_DEPENDENCY_TIMEOUT_MS:-60000}
+      JWT_SIGNING_SECRET: ${JWT_SIGNING_SECRET:-compose-local-jwt-signing-secret-min-32b}
+      WEBHOOK_SIGNING_SECRET: ${WEBHOOK_SIGNING_SECRET:-compose-local-webhook-signing-secret-32b}
     ports:
       - '3001:3001'
     depends_on:
@@ -212,7 +218,8 @@ services:
       context: .
       dockerfile: apps/worker/Dockerfile
       args:
-        NODE_IMAGE: node:20.19.3-alpine3.21
+        # glibc required by @temporalio/core-bridge (Alpine/musl unsupported)
+        NODE_IMAGE: node:20.19.3-bookworm-slim
     environment:
       NODE_ENV: production
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -266,6 +273,9 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       SERVICE_NAME: web
       SERVICE_VERSION: ${SERVICE_VERSION:-0.0.0}
+      # Server-side proxy must use the compose service name (not localhost).
+      API_BASE_URL: http://api:3001
+      # Browser-facing URL (host machine → published API port).
       NEXT_PUBLIC_API_BASE_URL: http://localhost:3001
       NEXT_PUBLIC_SHOW_RISK_DISCLOSURES: 'true'
     ports:

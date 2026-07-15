@@ -17,6 +17,31 @@ export const providerWebhookSchema = z
 
 export type ProviderWebhook = z.infer<typeof providerWebhookSchema>;
 
+export const webhookProcessingStateSchema = z.enum([
+  'RECEIVED',
+  'PROCESSING',
+  'PROCESSED',
+  'RETAINED',
+  'RETRYABLE',
+  'DEAD_LETTERED',
+]);
+
+export type WebhookProcessingState = z.infer<typeof webhookProcessingStateSchema>;
+
+/** Tiny Signal tip for MonthlyConversionWorkflow — never a full provider payload. */
+export const webhookSignalSchema = z
+  .object({
+    providerEventId: z.string().min(1).max(128),
+    accountId: uuidSchema,
+    eventType: z.string().min(1).max(128),
+    providerResourceId: z.string().min(1).max(128).optional(),
+    occurredAt: isoDateTimeSchema.optional(),
+    providerType: z.enum(['BANK', 'BROKERAGE']),
+  })
+  .strict();
+
+export type WebhookSignal = z.infer<typeof webhookSignalSchema>;
+
 export const providerWebhookRecordSchema = z
   .object({
     id: uuidSchema,
@@ -25,6 +50,15 @@ export const providerWebhookRecordSchema = z
     providerEventId: z.string().min(1),
     eventType: z.string().min(1),
     payloadRedacted: z.record(z.unknown()),
+    processingState: webhookProcessingStateSchema,
+    attempts: z.number().int().nonnegative(),
+    nextAttemptAt: isoDateTimeSchema.nullable(),
+    lastError: z.string().nullable(),
+    deadLetterReason: z.string().nullable(),
+    financialAccountId: uuidSchema.nullable(),
+    strategyId: uuidSchema.nullable(),
+    paymentPeriod: z.string().nullable(),
+    outcome: z.string().nullable(),
     receivedAt: isoDateTimeSchema,
     processedAt: isoDateTimeSchema.nullable(),
   })

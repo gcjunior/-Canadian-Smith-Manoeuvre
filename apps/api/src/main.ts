@@ -2,13 +2,28 @@ import { BankClient } from '@csm/bank-client';
 import { BrokerageClient } from '@csm/brokerage-client';
 import { parseApiEnv } from '@csm/contracts';
 import { checkDatabaseHealth, createPrismaClient, disconnectPrisma } from '@csm/database';
-import { createLogger, registerGracefulShutdown, waitForDependencies } from '@csm/observability';
+import {
+  createLogger,
+  initTelemetry,
+  registerGracefulShutdown,
+  shutdownTelemetry,
+  waitForDependencies,
+} from '@csm/observability';
 
 import { buildApiApp } from './app.js';
 import { checkTemporalClient, createTemporalClient } from './temporal-client.js';
 
 async function main(): Promise<void> {
   const env = parseApiEnv({ ...process.env, SERVICE_NAME: process.env.SERVICE_NAME ?? 'api' });
+  await initTelemetry({
+    serviceName: env.SERVICE_NAME,
+    serviceVersion: env.SERVICE_VERSION,
+    ...(env.OTEL_EXPORTER_OTLP_ENDPOINT !== undefined
+      ? { otlpEndpoint: env.OTEL_EXPORTER_OTLP_ENDPOINT }
+      : {}),
+    enabled: env.OTEL_ENABLED ?? true,
+  });
+
   const logger = createLogger({
     service: env.SERVICE_NAME,
     level: env.LOG_LEVEL,
@@ -64,6 +79,9 @@ async function main(): Promise<void> {
     },
     async () => {
       await disconnectPrisma();
+    },
+    async () => {
+      await shutdownTelemetry();
     },
   ]);
 

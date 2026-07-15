@@ -143,6 +143,47 @@ describe('BankSimulatorEngine', () => {
     expect(engine.getStore().draws.size).toBe(0);
   });
 
+  it('lists interest payments and ordinary debits after settle', () => {
+    const { engine } = createEngine();
+    const ids = bootstrapAccounts(engine);
+
+    const { charge, paymentId } = engine.postInterestCharge({
+      helocId: ids.helocId,
+      ordinaryAccountId: ids.ordinaryAccountId,
+      interestPeriod: '2026-03',
+      amountCents: 100_00n,
+    });
+
+    engine.runEvents(1_000);
+
+    const payments = engine.listInterestPayments(ids.helocId);
+    expect(payments).toHaveLength(1);
+    expect(payments[0]).toMatchObject({
+      chargeId: charge.id,
+      providerChargeId: charge.providerChargeId,
+      interestPeriod: '2026-03',
+      chargeState: 'POSTED',
+      paymentId,
+      paymentState: 'SETTLED',
+      ordinaryAccountId: ids.ordinaryAccountId,
+      amountCents: 100_00n,
+      failureCode: null,
+    });
+    expect(payments[0]?.debitId).toBeTruthy();
+    expect(payments[0]?.chargeAmountCents).toBe(100_00n);
+
+    const debits = engine.listOrdinaryDebits(ids.ordinaryAccountId);
+    expect(debits).toHaveLength(1);
+    expect(debits[0]).toMatchObject({
+      id: payments[0]?.debitId,
+      relatedInterestPaymentId: paymentId,
+      interestPeriod: '2026-03',
+      helocId: ids.helocId,
+      providerPaymentId: payments[0]?.providerPaymentId,
+      state: 'SETTLED',
+    });
+  });
+
   it('emits signed webhook events for payment lifecycle', () => {
     const { engine } = createEngine();
     const ids = bootstrapAccounts(engine);

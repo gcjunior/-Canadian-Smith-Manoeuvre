@@ -1,6 +1,8 @@
 import type {
   ProviderHelocAvailability,
   ProviderHelocDraw,
+  ProviderInterestPaymentView,
+  ProviderOrdinaryDebit,
   ProviderTransfer,
 } from './schemas.js';
 import { ProviderClientError } from './errors.js';
@@ -10,7 +12,39 @@ export class FakeBankClient {
   draws = new Map<string, ProviderHelocDraw>();
   transfers = new Map<string, ProviderTransfer>();
   availability = new Map<string, ProviderHelocAvailability>();
-  /** Simulate POST hanging forever (caller uses short timeout) — not used by fake itself. */
+  mortgagePayments = new Map<
+    string,
+    Array<{
+      id: string;
+      mortgageId: string;
+      providerPaymentId: string;
+      paymentPeriod: string;
+      state: 'SCHEDULED' | 'POSTED' | 'SETTLED' | 'REVERSED';
+      totalAmountCents: bigint;
+      principalAmountCents: bigint;
+      interestAmountCents: bigint;
+      scheduledAt: string;
+      postedAt: string | null;
+      settledAt: string | null;
+      reversedAt: string | null;
+    }>
+  >();
+  interestCharges = new Map<
+    string,
+    Array<{
+      id: string;
+      helocId: string;
+      providerChargeId: string;
+      interestPeriod: string;
+      amountCents: bigint;
+      state: string;
+      postedAt: string | null;
+      createdAt: string;
+    }>
+  >();
+  /** Joined interest payment views keyed by helocId. */
+  interestPayments = new Map<string, ProviderInterestPaymentView[]>();
+  ordinaryDebits = new Map<string, ProviderOrdinaryDebit>();
   failNextDrawWith?: ProviderClientError | undefined;
   failNextTransferWith?: ProviderClientError | undefined;
 
@@ -21,6 +55,36 @@ export class FakeBankClient {
       correlationId,
       simulator: 'bank-mortgage-heloc',
     };
+  }
+
+  async listMortgagePayments(mortgageId: string, _correlationId: string) {
+    return this.mortgagePayments.get(mortgageId) ?? [];
+  }
+
+  async listInterestCharges(helocId: string, _correlationId: string) {
+    return this.interestCharges.get(helocId) ?? [];
+  }
+
+  async getOrdinaryDebit(accountId: string, debitId: string, correlationId: string) {
+    const debit = this.ordinaryDebits.get(debitId);
+    if (!debit || debit.accountId !== accountId) {
+      throw new ProviderClientError({
+        kind: 'BUSINESS_REJECTION',
+        message: 'Debit not found',
+        statusCode: 404,
+        correlationId,
+        operation: 'fake.getOrdinaryDebit',
+      });
+    }
+    return debit;
+  }
+
+  async listOrdinaryDebits(accountId: string, _correlationId: string) {
+    return [...this.ordinaryDebits.values()].filter((d) => d.accountId === accountId);
+  }
+
+  async listInterestPayments(helocId: string, _correlationId: string) {
+    return this.interestPayments.get(helocId) ?? [];
   }
 
   async getHelocAvailability(helocId: string, _correlationId: string) {
@@ -77,6 +141,22 @@ export class FakeBankClient {
     return draw;
   }
 
+  async getHelocDraw(helocId: string, drawId: string, correlationId: string) {
+    const draw = [...this.draws.values()].find(
+      (d) => d.helocId === helocId && (d.id === drawId || d.providerTransactionId === drawId),
+    );
+    if (!draw) {
+      throw new ProviderClientError({
+        kind: 'BUSINESS_REJECTION',
+        message: 'Draw not found',
+        statusCode: 404,
+        correlationId,
+        operation: 'fake.getHelocDraw',
+      });
+    }
+    return draw;
+  }
+
   async findHelocDrawByIdempotencyKey(
     helocId: string,
     idempotencyKey: string,
@@ -119,6 +199,15 @@ export class FakeBankClient {
         });
       }
       throw error;
+    }
+  }
+
+  settleDraw(idempotencyKey: string): void {
+    for (const draw of this.draws.values()) {
+      if (draw.idempotencyKey === idempotencyKey) {
+        draw.state = 'SETTLED';
+        draw.settledAt = new Date().toISOString();
+      }
     }
   }
 
@@ -165,6 +254,22 @@ export class FakeBankClient {
     return transfer;
   }
 
+  async getTransfer(transferId: string, correlationId: string) {
+    const transfer =
+      this.transfers.get(transferId) ??
+      [...this.transfers.values()].find((t) => t.providerTransactionId === transferId);
+    if (!transfer) {
+      throw new ProviderClientError({
+        kind: 'BUSINESS_REJECTION',
+        message: 'Transfer not found',
+        statusCode: 404,
+        correlationId,
+        operation: 'fake.getTransfer',
+      });
+    }
+    return transfer;
+  }
+
   async findTransferByIdempotencyKey(idempotencyKey: string, correlationId: string) {
     const transfer = [...this.transfers.values()].find((t) => t.idempotencyKey === idempotencyKey);
     if (!transfer) {
@@ -196,6 +301,15 @@ export class FakeBankClient {
         });
       }
       throw error;
+    }
+  }
+
+  settleTransfer(idempotencyKey: string): void {
+    for (const transfer of this.transfers.values()) {
+      if (transfer.idempotencyKey === idempotencyKey) {
+        transfer.state = 'SETTLED';
+        transfer.settledAt = new Date().toISOString();
+      }
     }
   }
 }

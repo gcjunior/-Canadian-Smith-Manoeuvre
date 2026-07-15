@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   assertCycleTransition,
+  assertInterestCycleTransition,
   assertInvestmentOrderTransition,
   assertMoneyMovementTransition,
   assertStrategyTransition,
@@ -18,9 +19,10 @@ describe('status transitions', () => {
 
   it('rejects invalid status transitions', () => {
     expect(() => assertStrategyTransition('CLOSED', 'ACTIVE')).toThrow(ContractTransitionError);
-    expect(() => assertCycleTransition('COMPLETED', 'ORDER_PENDING')).toThrow(
-      ContractTransitionError,
-    );
+    expect(() => assertCycleTransition('WAITING_FOR_HELOC', 'SKIPPED')).not.toThrow();
+    expect(() => assertInterestCycleTransition('AWAITING_CHARGE', 'AWAITING_DEBIT')).not.toThrow();
+    expect(() => assertInterestCycleTransition('COMPLETED', 'AWAITING_CHARGE')).toThrow();
+    expect(() => assertCycleTransition('SKIPPED', 'COMPLETED')).toThrow(ContractTransitionError);
     expect(() => assertMoneyMovementTransition('SETTLED', 'PENDING')).toThrow(
       ContractTransitionError,
     );
@@ -28,4 +30,8 @@ describe('status transitions', () => {
       ContractTransitionError,
     );
   });
+});
+
+it('allows CREATED → UNKNOWN for ambiguous order submit', () => {
+  expect(() => assertInvestmentOrderTransition('CREATED', 'UNKNOWN')).not.toThrow();
 });

@@ -1,7 +1,12 @@
 # syntax=docker/dockerfile:1.7
-ARG NODE_IMAGE=node:20.19.3-alpine3.21
+# Temporal TypeScript SDK requires glibc (not Alpine/musl). See:
+# https://docs.temporal.io/develop/typescript/workers/run-worker-process
+ARG NODE_IMAGE=node:20.19.3-bookworm-slim
 FROM ${NODE_IMAGE} AS base
-RUN corepack enable && corepack prepare pnpm@10.33.4 --activate
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && corepack enable && corepack prepare pnpm@10.33.4 --activate
 WORKDIR /app
 
 FROM base AS deps
@@ -27,7 +32,10 @@ FROM ${NODE_IMAGE} AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV HEALTH_PORT=3100
-RUN addgroup -S csm && adduser -S csm -G csm \
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --system csm && useradd --system --gid csm --no-create-home csm \
  && corepack enable && corepack prepare pnpm@10.33.4 --activate
 COPY --from=build /app /app
 USER csm

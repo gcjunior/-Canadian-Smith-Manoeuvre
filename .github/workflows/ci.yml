@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: typecheck-lint-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: smith
+          POSTGRES_PASSWORD: smith
+          POSTGRES_DB: smith_manoeuvre
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U smith -d smith_manoeuvre"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://smith:smith@localhost:5432/smith_manoeuvre?schema=public
+      NODE_ENV: test
+      CI: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client + migrate
+        run: |
+          pnpm --filter @csm/database generate
+          pnpm --filter @csm/database migrate:deploy
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Failure / unit package pack
+        run: pnpm test:failure
+
+      - name: Temporal replay
+        run: pnpm test:replay
+
+      - name: Edmonton demo e2e (in-process sims + TestWorkflowEnvironment)
+        run: pnpm test:demo

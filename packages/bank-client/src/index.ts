@@ -15,8 +15,12 @@ export {
   providerHelocDrawSchema,
   providerTransferSchema,
   providerHelocAvailabilitySchema,
+  providerOrdinaryDebitSchema,
+  providerInterestPaymentViewSchema,
   type ProviderHelocDraw,
   type ProviderTransfer,
   type ProviderHelocAvailability,
+  type ProviderOrdinaryDebit,
+  type ProviderInterestPaymentView,
 } from './schemas.js';
 export { IDEMPOTENCY_KEY_HEADER } from './http.js';

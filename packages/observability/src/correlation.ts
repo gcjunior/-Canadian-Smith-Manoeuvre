@@ -9,8 +9,12 @@ export function createCorrelationId(): string {
   return randomUUID();
 }
 
+export function isValidCorrelationId(value: string | undefined | null): value is string {
+  return Boolean(value && CORRELATION_ID_PATTERN.test(value.trim()));
+}
+
 export function normalizeCorrelationId(value: string | undefined | null): string {
-  if (value && CORRELATION_ID_PATTERN.test(value.trim())) {
+  if (isValidCorrelationId(value)) {
     return value.trim();
   }
   return createCorrelationId();

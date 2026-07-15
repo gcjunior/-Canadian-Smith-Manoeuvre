@@ -20,12 +20,15 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@csm/contracts": "workspace:*",
-    "@csm/observability": "workspace:*",
-    "@csm/database": "workspace:*",
     "@csm/bank-client": "workspace:*",
     "@csm/brokerage-client": "workspace:*",
-    "@temporalio/activity": "1.11.8"
+    "@csm/contracts": "workspace:*",
+    "@csm/database": "workspace:*",
+    "@csm/domain": "workspace:*",
+    "@csm/observability": "workspace:*",
+    "@prisma/client": "6.11.1",
+    "@temporalio/activity": "1.11.8",
+    "@temporalio/common": "1.11.8"
   },
   "devDependencies": {
     "typescript": "5.8.3",

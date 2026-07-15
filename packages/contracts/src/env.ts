@@ -6,11 +6,63 @@ export const logLevelSchema = z
   .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace'])
   .default('info');
 
+/** Dev-only defaults — refused when NODE_ENV=production. */
+export const LOCAL_DEV_JWT_SIGNING_SECRET = 'local-dev-jwt-signing-secret';
+export const LOCAL_DEV_WEBHOOK_SECRET = 'local-dev-webhook-secret';
+
+const INSECURE_SECRET_VALUES = new Set([
+  LOCAL_DEV_JWT_SIGNING_SECRET,
+  LOCAL_DEV_WEBHOOK_SECRET,
+  'secret',
+  'changeme',
+  'password',
+]);
+
+function refuseInsecureSecretsInProduction(
+  data: {
+    NODE_ENV: z.infer<typeof nodeEnvSchema>;
+    JWT_SIGNING_SECRET?: string;
+    WEBHOOK_SIGNING_SECRET?: string;
+  },
+  ctx: z.RefinementCtx,
+): void {
+  if (data.NODE_ENV !== 'production') {
+    return;
+  }
+  for (const [field, value] of [
+    ['JWT_SIGNING_SECRET', data.JWT_SIGNING_SECRET],
+    ['WEBHOOK_SIGNING_SECRET', data.WEBHOOK_SIGNING_SECRET],
+  ] as const) {
+    if (value === undefined) {
+      continue;
+    }
+    if (INSECURE_SECRET_VALUES.has(value) || value.length < 32) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [field],
+        message: `${field} must be a non-default secret with length >= 32 when NODE_ENV=production`,
+      });
+    }
+  }
+}
+
 export const commonEnvSchema = z.object({
   NODE_ENV: nodeEnvSchema,
   LOG_LEVEL: logLevelSchema,
   SERVICE_NAME: z.string().min(1),
   SERVICE_VERSION: z.string().min(1).default('0.0.0'),
+  /** OTLP HTTP collector base URL (e.g. http://otel-collector:4318). Empty disables remote export. */
+  OTEL_EXPORTER_OTLP_ENDPOINT: z
+    .string()
+    .optional()
+    .transform((v) => (v && v.trim().length > 0 ? v.trim() : undefined)),
+  OTEL_ENABLED: z
+    .union([z.boolean(), z.enum(['true', 'false', '1', '0'])])
+    .optional()
+    .transform((v) => {
+      if (v === undefined) return true;
+      return v === true || v === 'true' || v === '1';
+    }),
 });
 
 export const databaseEnvSchema = z.object({
@@ -34,7 +86,15 @@ export const apiEnvSchema = commonEnvSchema
     DEFAULT_TIMEZONE: z.string().min(1).default('America/Toronto'),
     PLATFORM_MONTHLY_DRAW_CAP_CENTS: z.coerce.bigint().positive().default(500_000n),
     STARTUP_DEPENDENCY_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
-  });
+    JWT_SIGNING_SECRET: z.string().min(16).default(LOCAL_DEV_JWT_SIGNING_SECRET),
+    JWT_EXPIRES_SECONDS: z.coerce.number().int().positive().default(86_400),
+    WEBHOOK_SIGNING_SECRET: z.string().min(8).default(LOCAL_DEV_WEBHOOK_SECRET),
+    BODY_LIMIT_BYTES: z.coerce.number().int().positive().default(1_048_576),
+    RATE_LIMIT_MAX: z.coerce.number().int().positive().default(120),
+    RATE_LIMIT_TIME_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
+    TEMPORAL_UI_BASE_URL: z.string().url().default('http://localhost:8233'),
+  })
+  .superRefine(refuseInsecureSecretsInProduction);
 
 export const workerEnvSchema = commonEnvSchema
   .merge(databaseEnvSchema)
@@ -43,27 +103,38 @@ export const workerEnvSchema = commonEnvSchema
     BANK_SIMULATOR_BASE_URL: z.string().url().default('http://localhost:3002'),
     BROKERAGE_SIMULATOR_BASE_URL: z.string().url().default('http://localhost:3003'),
     STARTUP_DEPENDENCY_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
+    PLATFORM_MONTHLY_DRAW_CAP_CENTS: z.coerce.bigint().positive().default(500_000n),
   });
 
-export const simulatorEnvSchema = commonEnvSchema.extend({
-  HOST: z.string().default('0.0.0.0'),
-  PORT: z.coerce.number().int().positive(),
-  WEBHOOK_SIGNING_SECRET: z.string().min(8).default('local-dev-webhook-secret'),
-  WEBHOOK_TARGET_URL: z.string().url().optional(),
-  WEBHOOKS_ENABLED: z
-    .union([z.boolean(), z.enum(['true', 'false', '1', '0'])])
-    .transform((v) => v === true || v === 'true' || v === '1')
-    .default(true),
-});
+export const simulatorEnvSchema = commonEnvSchema
+  .extend({
+    HOST: z.string().default('0.0.0.0'),
+    PORT: z.coerce.number().int().positive(),
+    WEBHOOK_SIGNING_SECRET: z.string().min(8).default(LOCAL_DEV_WEBHOOK_SECRET),
+    WEBHOOK_TARGET_URL: z.string().url().optional(),
+    WEBHOOKS_ENABLED: z
+      .union([z.boolean(), z.enum(['true', 'false', '1', '0'])])
+      .transform((v) => v === true || v === 'true' || v === '1')
+      .default(true),
+  })
+  .superRefine(refuseInsecureSecretsInProduction);
 
 export const webEnvSchema = z.object({
   NODE_ENV: nodeEnvSchema,
+  /** Server-side Fastify base URL — never embed tokens; used only by Next BFF. */
+  API_BASE_URL: z.string().url().default('http://localhost:3001'),
   NEXT_PUBLIC_API_BASE_URL: z.string().url().default('http://localhost:3001'),
   NEXT_PUBLIC_SHOW_RISK_DISCLOSURES: z
     .union([z.boolean(), z.enum(['true', 'false', '1', '0'])])
     .transform((v) => v === true || v === 'true' || v === '1')
     .default(true),
+  SESSION_COOKIE_NAME: z.string().min(1).default('csm_session'),
+  TEMPORAL_UI_BASE_URL: z.string().url().default('http://localhost:8233'),
 });
+
+export function parseWebEnv(env: NodeJS.ProcessEnv = process.env): WebEnv {
+  return webEnvSchema.parse(env);
+}
 
 export type ApiEnv = z.infer<typeof apiEnvSchema>;
 export type WorkerEnv = z.infer<typeof workerEnvSchema>;

@@ -13,8 +13,8 @@ import {
 } from './decimal.js';
 import { createSeededRng } from './rng.js';
 import type { BrokerageScenarioConfig, DeterministicFailureStep } from './scenario/schema.js';
-import { BrokerageSimulatorStore } from './store.js';
-import type { BrokerageAccount, Deposit, Fill, Order, Quote } from './types.js';
+import { type BrokerageSimulatorStore } from './store.js';
+import type { BrokerageAccount, Deposit, Fill, Order, Quote, ScheduledJob } from './types.js';
 
 export class SimulatorHttpError extends Error {
   constructor(
@@ -38,6 +38,22 @@ export interface BrokerageSimulatorDeps {
 
 function hashRequest(payload: unknown): string {
   return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+}
+
+function extractSimulatorExternalAccountId(payload: Record<string, unknown>): string {
+  for (const key of ['accountId', 'externalAccountId']) {
+    const value = payload[key];
+    if (typeof value === 'string' && value.length > 0) {
+      return value;
+    }
+  }
+  return 'unknown-account';
+}
+
+function buildSimulatorProviderEventId(type: string, payload: Record<string, unknown>): string {
+  const id = typeof payload.id === 'string' ? payload.id : randomUUID();
+  const state = typeof payload.state === 'string' ? payload.state : 'na';
+  return `${type}:${id}:${state}`;
 }
 
 function moneyJson(cents: bigint): string {
@@ -96,10 +112,16 @@ export class BrokerageSimulatorEngine {
     externalAccountId: string;
     displayName: string;
     settledCashCents?: bigint;
+    /** Optional deterministic account UUID (aligned with bank BROKERAGE_LINK). */
+    id?: string;
   }): BrokerageAccount {
     const scenario = this.requireScenario();
+    const accountId = input.id ?? randomUUID();
+    if (this.store.accounts.has(accountId)) {
+      throw new SimulatorHttpError(409, 'Account id already exists');
+    }
     const account: BrokerageAccount = {
-      id: randomUUID(),
+      id: accountId,
       externalAccountId: input.externalAccountId,
       displayName: input.displayName,
       currencyCode: 'CAD',
@@ -114,11 +136,7 @@ export class BrokerageSimulatorEngine {
     return account;
   }
 
-  upsertQuote(input: {
-    symbol: string;
-    mid: string;
-    spread?: string;
-  }): Quote {
+  upsertQuote(input: { symbol: string; mid: string; spread?: string }): Quote {
     const mid = parseDecimal(input.mid);
     const spread = parseDecimal(input.spread ?? this.requireScenario().spread);
     const half = spread / 2n;
@@ -184,11 +202,10 @@ export class BrokerageSimulatorEngine {
     return [...this.store.positions.values()].filter((p) => p.accountId === accountId);
   }
 
-  createDeposit(input: {
-    accountId: string;
-    amountCents: bigint;
-    idempotencyKey: string;
-  }): { statusCode: number; body: unknown } {
+  createDeposit(input: { accountId: string; amountCents: bigint; idempotencyKey: string }): {
+    statusCode: number;
+    body: unknown;
+  } {
     const scenario = this.requireScenario();
     const scope = 'brokerage.deposit';
     const requestHash = hashRequest({
@@ -536,10 +553,7 @@ export class BrokerageSimulatorEngine {
     if (!order) {
       return;
     }
-    if (
-      order.state !== 'SUBMITTED' &&
-      !(remainingOnly && order.state === 'PARTIALLY_FILLED')
-    ) {
+    if (order.state !== 'SUBMITTED' && !(remainingOnly && order.state === 'PARTIALLY_FILLED')) {
       return;
     }
 
@@ -661,7 +675,7 @@ export class BrokerageSimulatorEngine {
   }
 
   private schedule(
-    type: import('./types.js').ScheduledJob['type'],
+    type: ScheduledJob['type'],
     refId: string,
     delayMs: number,
     fromMs = this.clock.nowMs(),
@@ -688,9 +702,17 @@ export class BrokerageSimulatorEngine {
       scenario?.webhookOutOfOrder === true || this.consumeFailure('OUT_OF_ORDER_WEBHOOK');
     const duplicate = scenario?.webhookDuplicateDelivery === true;
 
+    const externalAccountId = extractSimulatorExternalAccountId(payload);
+    const providerEventId = buildSimulatorProviderEventId(type, payload);
     const body = malformed
-      ? { broken: true, type }
-      : { type, data: payload, occurredAt: this.iso() };
+      ? { broken: true, type, providerEventId, externalAccountId }
+      : {
+          type,
+          data: payload,
+          occurredAt: this.iso(),
+          providerEventId,
+          externalAccountId,
+        };
     const raw = JSON.stringify(body);
     const signature = createHmac('sha256', this.webhookSigningSecret).update(raw).digest('hex');
 
@@ -706,6 +728,7 @@ export class BrokerageSimulatorEngine {
       dropped,
       signature: `sha256=${signature}`,
       malformed,
+      externalAccountId,
     };
     this.store.webhooks.push(event);
     if (!dropped) {
@@ -730,12 +753,16 @@ export class BrokerageSimulatorEngine {
       return;
     }
     try {
+      const headers: Record<string, string> = {
+        'content-type': 'application/json',
+        'x-brokerage-sim-signature': event.signature,
+      };
+      if (event.externalAccountId) {
+        headers['x-csm-external-account-id'] = event.externalAccountId;
+      }
       const response = await fetch(this.webhookTargetUrl, {
         method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-brokerage-sim-signature': event.signature,
-        },
+        headers,
         body: JSON.stringify(event.payload),
       });
       if (!response.ok && event.attempts < 3) {

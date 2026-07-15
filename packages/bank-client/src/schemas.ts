@@ -93,11 +93,14 @@ export const providerOrdinaryDebitSchema = z
     id: z.string().uuid(),
     accountId: z.string().uuid(),
     amountCents: positiveCadCentsSchema,
-    relatedInterestPaymentId: z.string().uuid(),
+    relatedInterestPaymentId: z.string().uuid().nullable(),
     narrative: z.string(),
     state: z.string(),
     createdAt: z.string(),
     settledAt: z.string().nullable(),
+    interestPeriod: z.string().optional(),
+    helocId: z.string().uuid().optional(),
+    providerPaymentId: z.string().optional(),
   })
   .passthrough();
 
@@ -114,6 +117,24 @@ export const providerInterestChargeSchema = z
   })
   .passthrough();
 
+export const providerInterestPaymentViewSchema = z
+  .object({
+    chargeId: z.string().uuid(),
+    providerChargeId: z.string(),
+    interestPeriod: z.string(),
+    chargeState: z.string(),
+    chargeAmountCents: positiveCadCentsSchema,
+    paymentId: z.string().uuid(),
+    providerPaymentId: z.string(),
+    paymentState: z.string(),
+    ordinaryAccountId: z.string().uuid(),
+    debitId: z.string().uuid().nullable(),
+    amountCents: positiveCadCentsSchema,
+    failureCode: z.string().nullable(),
+    settledAt: z.string().nullable(),
+  })
+  .passthrough();
+
 export const bankHealthSchema = z
   .object({
     status: z.string(),
@@ -127,3 +148,5 @@ export const bankHealthSchema = z
 export type ProviderHelocDraw = z.infer<typeof providerHelocDrawSchema>;
 export type ProviderTransfer = z.infer<typeof providerTransferSchema>;
 export type ProviderHelocAvailability = z.infer<typeof providerHelocAvailabilitySchema>;
+export type ProviderOrdinaryDebit = z.infer<typeof providerOrdinaryDebitSchema>;
+export type ProviderInterestPaymentView = z.infer<typeof providerInterestPaymentViewSchema>;

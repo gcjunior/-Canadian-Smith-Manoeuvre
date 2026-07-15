@@ -1,7 +1,7 @@
 import type { z } from 'zod';
 import { ZodError } from 'zod';
 
-import { CORRELATION_ID_HEADER, type Logger } from '@csm/observability';
+import { csmMetrics, injectTraceHeaders, withSpan, type Logger } from '@csm/observability';
 
 import {
   classifyHttpStatus,
@@ -21,6 +21,8 @@ export interface HttpClientOptions {
   /** Max attempts for safe GET retries (including the first try). Default 3. */
   maxGetAttempts?: number;
   getRetryBaseDelayMs?: number;
+  /** Metric attribute provider=bank|brokerage */
+  providerLabel?: string;
 }
 
 export interface RequestContext {
@@ -42,6 +44,7 @@ export class ProviderHttpClient {
   private readonly responseTimeoutMs: number;
   private readonly maxGetAttempts: number;
   private readonly getRetryBaseDelayMs: number;
+  private readonly providerLabel: string;
 
   constructor(options: HttpClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, '');
@@ -51,6 +54,7 @@ export class ProviderHttpClient {
     this.responseTimeoutMs = options.responseTimeoutMs ?? 30_000;
     this.maxGetAttempts = options.maxGetAttempts ?? 3;
     this.getRetryBaseDelayMs = options.getRetryBaseDelayMs ?? 50;
+    this.providerLabel = options.providerLabel ?? 'provider';
   }
 
   async requestJson<S extends z.ZodTypeAny>(
@@ -60,37 +64,62 @@ export class ProviderHttpClient {
     ctx: RequestContext,
     body?: unknown,
   ): Promise<{ status: number; data: z.infer<S> }> {
-    const safeToRetry = ctx.safeToRetry === true && ctx.financialMutation !== true;
-    const attempts = safeToRetry ? this.maxGetAttempts : 1;
-    let lastError: unknown;
+    return withSpan(
+      `provider.${this.providerLabel}.${ctx.operation}`,
+      { correlationId: ctx.correlationId },
+      async () => {
+        const safeToRetry = ctx.safeToRetry === true && ctx.financialMutation !== true;
+        const attempts = safeToRetry ? this.maxGetAttempts : 1;
+        let lastError: unknown;
 
-    for (let attempt = 1; attempt <= attempts; attempt += 1) {
-      try {
-        return await this.singleRequest(method, path, schema, ctx, body);
-      } catch (error) {
-        lastError = error;
-        const retryable =
-          error instanceof ProviderClientError &&
-          error.retryable &&
-          safeToRetry &&
-          attempt < attempts;
-        this.logger.warn(
-          {
-            operation: ctx.operation,
-            correlationId: ctx.correlationId,
-            attempt,
-            kind: error instanceof ProviderClientError ? error.kind : 'UNKNOWN',
-            statusCode: error instanceof ProviderClientError ? error.statusCode : undefined,
-          },
-          'provider request failed',
-        );
-        if (!retryable) {
-          throw error;
+        for (let attempt = 1; attempt <= attempts; attempt += 1) {
+          try {
+            const result = await this.singleRequest(method, path, schema, ctx, body);
+            csmMetrics.providerRequests.add(1, {
+              provider: this.providerLabel,
+              operation: ctx.operation,
+              outcome: 'ok',
+            });
+            return result;
+          } catch (error) {
+            lastError = error;
+            const kind = error instanceof ProviderClientError ? error.kind : 'UNKNOWN';
+            if (kind === 'AMBIGUOUS_RESULT') {
+              csmMetrics.ambiguousProviderOutcomes.add(1, {
+                provider: this.providerLabel,
+                operation: ctx.operation,
+              });
+            }
+            csmMetrics.providerRequests.add(1, {
+              provider: this.providerLabel,
+              operation: ctx.operation,
+              outcome: 'error',
+              kind,
+            });
+            const retryable =
+              error instanceof ProviderClientError &&
+              error.retryable &&
+              safeToRetry &&
+              attempt < attempts;
+            this.logger.warn(
+              {
+                operation: ctx.operation,
+                correlationId: ctx.correlationId,
+                attempt,
+                kind,
+                statusCode: error instanceof ProviderClientError ? error.statusCode : undefined,
+              },
+              'provider request failed',
+            );
+            if (!retryable) {
+              throw error;
+            }
+            await sleep(this.getRetryBaseDelayMs * 2 ** (attempt - 1));
+          }
         }
-        await sleep(this.getRetryBaseDelayMs * 2 ** (attempt - 1));
-      }
-    }
-    throw lastError;
+        throw lastError;
+      },
+    );
   }
 
   private async singleRequest<S extends z.ZodTypeAny>(
@@ -101,16 +130,16 @@ export class ProviderHttpClient {
     body?: unknown,
   ): Promise<{ status: number; data: z.infer<S> }> {
     const url = `${this.baseUrl}${path}`;
-    const headers: Record<string, string> = {
-      accept: 'application/json',
-      [CORRELATION_ID_HEADER]: ctx.correlationId,
-    };
-    if (ctx.idempotencyKey) {
-      headers[IDEMPOTENCY_KEY_HEADER] = ctx.idempotencyKey;
-    }
-    if (body !== undefined) {
-      headers['content-type'] = 'application/json';
-    }
+    const headers = injectTraceHeaders(
+      {
+        accept: 'application/json',
+        ...(ctx.idempotencyKey !== undefined
+          ? { [IDEMPOTENCY_KEY_HEADER]: ctx.idempotencyKey }
+          : {}),
+        ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+      },
+      ctx.correlationId,
+    );
 
     this.logger.info(
       {
@@ -178,10 +207,12 @@ export class ProviderHttpClient {
   }
 
   private mapTransportError(error: unknown, ctx: RequestContext): ProviderClientError {
-    if (ctx.financialMutation && isAbortError(error)) {
+    // Any failure after a financial POST may have been accepted by the provider.
+    // Never Temporal-retry as a re-POST — resolve by idempotency key.
+    if (ctx.financialMutation) {
       return new ProviderClientError({
         kind: 'AMBIGUOUS_RESULT',
-        message: `Timeout during financial operation ${ctx.operation}; do not retry POST — resolve by idempotency key`,
+        message: `Uncertain outcome during financial operation ${ctx.operation}; do not retry POST — resolve by idempotency key`,
         correlationId: ctx.correlationId,
         ...(ctx.idempotencyKey !== undefined ? { idempotencyKey: ctx.idempotencyKey } : {}),
         operation: ctx.operation,
@@ -206,26 +237,22 @@ export class ProviderHttpClient {
     });
   }
 
-  private mapHttpError(
-    status: number,
-    json: unknown,
-    ctx: RequestContext,
-  ): ProviderClientError {
+  private mapHttpError(status: number, json: unknown, ctx: RequestContext): ProviderClientError {
     const body = asRecord(json);
+
+    // Uncertain gateway / provider availability after a mutation must not re-POST.
     if (
       ctx.financialMutation &&
-      status === 504 &&
-      body &&
-      (body['processed'] === true || body['processed'] === 'true')
+      (status === 502 || status === 503 || status === 504 || status >= 500)
     ) {
       return new ProviderClientError({
         kind: 'AMBIGUOUS_RESULT',
-        message: `Provider timed out after processing ${ctx.operation}`,
+        message: `Uncertain HTTP ${status} during financial operation ${ctx.operation}; do not retry POST — resolve by idempotency key`,
         correlationId: ctx.correlationId,
         statusCode: status,
         ...(ctx.idempotencyKey !== undefined ? { idempotencyKey: ctx.idempotencyKey } : {}),
         operation: ctx.operation,
-        details: body,
+        ...(body !== undefined ? { details: body } : {}),
       });
     }
 

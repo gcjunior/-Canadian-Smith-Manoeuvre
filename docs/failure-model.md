@@ -29,7 +29,7 @@ flowchart TD
   A[Activity: financial POST + idempotency key] --> B{Completed?}
   B -->|yes SETTLED| C[Proceed]
   B -->|explicit FAILED| P[Pause / fail cycle]
-  B -->|timeout / unknown| R[Mark TIMED_OUT_NEEDS_RECONCILE]
+  B -->|timeout / unknown| R[Mark MoneyMovement UNKNOWN]
   R --> G[GET status by idempotency key / provider op id]
   G -->|SETTLED| C
   G -->|FAILED| P
@@ -51,12 +51,12 @@ sequenceDiagram
   participant Strat as Strategy
 
   WF->>Act: drawHeloc(D, key)
-  Act->>DB: insert ProviderOperation SUBMITTED
+  Act->>DB: insert MoneyMovement REQUESTED
   Act->>Prov: POST draw
-  Prov-->>Act: timeout
-  Act->>DB: status TIMED_OUT_NEEDS_RECONCILE
-  Act-->>WF: EXTERNAL_TIMEOUT / RECONCILIATION_REQUIRED
-  WF->>Act: reconcileHelocDraw(key)
+  Prov-->>Act: timeout / 5xx / transport failure
+  Act->>DB: status UNKNOWN
+  Act-->>WF: AMBIGUOUS_RESULT (non-retryable)
+  WF->>Act: resolveAmbiguousHelocDraw(key)
   Act->>Prov: GET by key
   alt SETTLED
     Prov-->>Act: SETTLED
@@ -113,3 +113,14 @@ Demo mode may use seeded PRNG in **Activities/simulators only**.
 - [monthly-conversion-workflow.md](./monthly-conversion-workflow.md)
 - [heloc-interest-workflow.md](./heloc-interest-workflow.md)
 - ADR-0002, ADR-0006, ADR-0009
+
+## Runtime mapping (audited)
+
+This repository persists ambiguous financial outcomes on **`MoneyMovement.state = UNKNOWN`**
+(and `InvestmentOrder.state = UNKNOWN` for orders). Provider clients throw **`AMBIGUOUS_RESULT`**
+for financial-mutation timeouts, 5xx, and post-send transport failures. Temporal
+`financialMutation` Activities treat `AMBIGUOUS_RESULT` as **non-retryable** and GET by
+idempotency key before any re-POST (Worker-crash recovery only).
+
+Deprecated vocabulary (`ProviderOperation`, `TIMED_OUT_NEEDS_RECONCILE`) from earlier drafts
+must not appear in new runbooks.

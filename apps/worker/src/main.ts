@@ -1,23 +1,53 @@
-import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 import { NativeConnection, Worker } from '@temporalio/worker';
 
 import { BankClient } from '@csm/bank-client';
 import { BrokerageClient } from '@csm/brokerage-client';
 import { parseWorkerEnv } from '@csm/contracts';
-import { checkDatabaseHealth, createPrismaClient, disconnectPrisma } from '@csm/database';
-import { createLogger, registerGracefulShutdown, waitForDependencies } from '@csm/observability';
+import {
+  checkDatabaseHealth,
+  createPrismaClient,
+  createRepositories,
+  disconnectPrisma,
+} from '@csm/database';
+import {
+  createBuildInfo,
+  createLogger,
+  csmMetrics,
+  initTelemetry,
+  registerGracefulShutdown,
+  shutdownTelemetry,
+  waitForDependencies,
+} from '@csm/observability';
 import { createActivities } from '@csm/temporal-activities';
+import { WORKFLOW_BUNDLE_VERSION } from '@csm/temporal-workflows';
 
 import { startHealthServer } from './health-server.js';
-
-const require = createRequire(import.meta.url);
 
 async function main(): Promise<void> {
   const env = parseWorkerEnv({
     ...process.env,
     SERVICE_NAME: process.env.SERVICE_NAME ?? 'worker',
   });
+
+  await initTelemetry({
+    serviceName: env.SERVICE_NAME,
+    serviceVersion: env.SERVICE_VERSION,
+    ...(env.OTEL_EXPORTER_OTLP_ENDPOINT !== undefined
+      ? { otlpEndpoint: env.OTEL_EXPORTER_OTLP_ENDPOINT }
+      : {}),
+    enabled: env.OTEL_ENABLED ?? true,
+  });
+
+  const build = createBuildInfo({
+    service: env.SERVICE_NAME,
+    version: env.SERVICE_VERSION,
+    temporalNamespace: env.TEMPORAL_NAMESPACE,
+    temporalTaskQueue: env.TEMPORAL_TASK_QUEUE,
+    temporalAddress: env.TEMPORAL_ADDRESS,
+  });
+
   const logger = createLogger({
     service: env.SERVICE_NAME,
     level: env.LOG_LEVEL,
@@ -25,14 +55,20 @@ async function main(): Promise<void> {
     pretty: false,
   });
 
-  const healthPort = Number(process.env.HEALTH_PORT ?? '3100');
-  const healthServer = startHealthServer(healthPort);
-
   const prisma = createPrismaClient(env.DATABASE_URL);
   const bankClient = new BankClient({ baseUrl: env.BANK_SIMULATOR_BASE_URL, logger });
   const brokerageClient = new BrokerageClient({
     baseUrl: env.BROKERAGE_SIMULATOR_BASE_URL,
     logger,
+  });
+
+  const healthPort = Number(process.env.HEALTH_PORT ?? '3100');
+  const healthServer = startHealthServer(healthPort, {
+    build,
+    workflowBundleVersion: WORKFLOW_BUNDLE_VERSION,
+    checkReady: async () => {
+      await checkDatabaseHealth(prisma);
+    },
   });
 
   await waitForDependencies(
@@ -46,11 +82,14 @@ async function main(): Promise<void> {
   const activities = createActivities({
     logger,
     prisma,
+    repos: createRepositories(prisma),
     bankClient,
     brokerageClient,
+    platformMonthlyDrawCapCents: env.PLATFORM_MONTHLY_DRAW_CAP_CENTS,
   });
 
-  const workflowsPath = require.resolve('@csm/temporal-workflows');
+  // ESM-only package exports: use import.meta.resolve (not require.resolve).
+  const workflowsPath = fileURLToPath(import.meta.resolve('@csm/temporal-workflows'));
 
   const worker = await Worker.create({
     connection,
@@ -58,7 +97,16 @@ async function main(): Promise<void> {
     taskQueue: env.TEMPORAL_TASK_QUEUE,
     workflowsPath,
     activities,
+    identity: build.identity,
   });
+
+  // Approximate active strategies gauge on worker startup (ops can scrape APItoo).
+  try {
+    const count = await prisma.strategy.count({ where: { state: 'ACTIVE' } });
+    csmMetrics.activeStrategies.set(count);
+  } catch (error) {
+    logger.warn({ err: error }, 'failed to seed activeStrategies gauge');
+  }
 
   registerGracefulShutdown(logger, [
     async () => {
@@ -75,10 +123,20 @@ async function main(): Promise<void> {
     async () => {
       await disconnectPrisma();
     },
+    async () => {
+      await shutdownTelemetry();
+    },
   ]);
 
   logger.info(
-    { taskQueue: env.TEMPORAL_TASK_QUEUE, workflowsPath, healthPort },
+    {
+      taskQueue: env.TEMPORAL_TASK_QUEUE,
+      workflowsPath,
+      healthPort,
+      identity: build.identity,
+      version: build.version,
+      workflowBundleVersion: WORKFLOW_BUNDLE_VERSION,
+    },
     'temporal worker starting',
   );
   await worker.run();

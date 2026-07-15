@@ -45,7 +45,7 @@ export class BrokerageClient {
   private readonly http: ProviderHttpClient;
 
   constructor(options: BrokerageClientOptions) {
-    this.http = new ProviderHttpClient(options);
+    this.http = new ProviderHttpClient({ ...options, providerLabel: 'brokerage' });
   }
 
   async health(correlationId: string) {
@@ -120,7 +120,7 @@ export class BrokerageClient {
   async findDepositByIdempotencyKey(idempotencyKey: string, correlationId: string) {
     const { data } = await this.http.requestJson(
       'GET',
-      `/brokerage/deposits/by-idempotency-key/${encodeURIComponent(idempotencyKey)}`,
+      `/brokerage/deposits/by-idempotency-key?key=${encodeURIComponent(idempotencyKey)}`,
       providerDepositSchema,
       { correlationId, operation: 'brokerage.findDepositByIdempotencyKey', safeToRetry: true },
     );
@@ -188,7 +188,7 @@ export class BrokerageClient {
   async findOrderByIdempotencyKey(idempotencyKey: string, correlationId: string) {
     const { data } = await this.http.requestJson(
       'GET',
-      `/brokerage/orders/by-idempotency-key/${encodeURIComponent(idempotencyKey)}`,
+      `/brokerage/orders/by-idempotency-key?key=${encodeURIComponent(idempotencyKey)}`,
       providerOrderSchema,
       { correlationId, operation: 'brokerage.findOrderByIdempotencyKey', safeToRetry: true },
     );

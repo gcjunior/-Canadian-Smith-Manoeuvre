@@ -145,7 +145,7 @@ describe('brokerage-simulator HTTP integration', () => {
 
     const byKey = await app.inject({
       method: 'GET',
-      url: `/brokerage/orders/by-idempotency-key/${orderKey}`,
+      url: `/brokerage/orders/by-idempotency-key?key=${orderKey}`,
     });
     expect(byKey.json().id).toBe(orderId);
 

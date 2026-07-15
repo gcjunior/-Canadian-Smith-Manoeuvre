@@ -5,7 +5,15 @@ import fp from 'fastify-plugin';
 import { ZodError } from 'zod';
 
 import type { SimulatorEnv } from '@csm/contracts';
-import { CORRELATION_ID_HEADER, normalizeCorrelationId, type Logger } from '@csm/observability';
+import {
+  CORRELATION_ID_HEADER,
+  createBuildInfo,
+  csmMetrics,
+  healthPayload,
+  normalizeCorrelationId,
+  snapshotMetrics,
+  type Logger,
+} from '@csm/observability';
 
 import { SimulatorClock } from './clock.js';
 import { BankSimulatorEngine, SimulatorHttpError } from './engine.js';
@@ -30,9 +38,7 @@ export async function buildSimulatorApp(options: BuildSimulatorAppOptions) {
     store,
     logger,
     webhookSigningSecret: env.WEBHOOK_SIGNING_SECRET,
-    ...(env.WEBHOOK_TARGET_URL !== undefined
-      ? { webhookTargetUrl: env.WEBHOOK_TARGET_URL }
-      : {}),
+    ...(env.WEBHOOK_TARGET_URL !== undefined ? { webhookTargetUrl: env.WEBHOOK_TARGET_URL } : {}),
     webhooksEnabledDefault: env.WEBHOOKS_ENABLED,
   });
 
@@ -72,6 +78,19 @@ export async function buildSimulatorApp(options: BuildSimulatorAppOptions) {
   });
   await app.register(swaggerUi, { routePrefix: '/docs' });
 
+  const build = createBuildInfo({
+    service: env.SERVICE_NAME,
+    version: env.SERVICE_VERSION,
+  });
+  app.addHook('onResponse', async (request, reply) => {
+    csmMetrics.providerRequests.add(1, {
+      provider: 'bank-sim',
+      method: request.method,
+      route: request.routeOptions.url ?? request.url,
+      status: String(reply.statusCode),
+    });
+  });
+
   app.get(
     '/health',
     {
@@ -80,35 +99,23 @@ export async function buildSimulatorApp(options: BuildSimulatorAppOptions) {
         response: {
           200: {
             type: 'object',
-            properties: {
-              status: { type: 'string' },
-              service: { type: 'string' },
-              version: { type: 'string' },
-              correlationId: { type: 'string' },
-              simulator: { type: 'string' },
-            },
+            additionalProperties: true,
           },
         },
       },
     },
     async (request) => {
       const correlationId =
-        (request as { correlationId?: string }).correlationId ??
-        normalizeCorrelationId(undefined);
-      return {
-        status: 'ok',
-        service: env.SERVICE_NAME,
-        version: env.SERVICE_VERSION,
+        (request as { correlationId?: string }).correlationId ?? normalizeCorrelationId(undefined);
+      return healthPayload(build, 'ok', {
         correlationId,
         simulator: 'bank-mortgage-heloc',
-      };
+      });
     },
   );
 
-  app.get('/ready', async () => ({
-    status: 'ok',
-    service: env.SERVICE_NAME,
-  }));
+  app.get('/ready', async () => healthPayload(build, 'ok', { ready: true }));
+  app.get('/metrics', async () => snapshotMetrics());
 
   await registerAdminRoutes(app, engine);
   await registerBankRoutes(app, engine);

@@ -147,7 +147,7 @@ describe('bank-simulator HTTP integration', () => {
 
     const byKey = await app.inject({
       method: 'GET',
-      url: `/bank/helocs/${helocId}/draws/by-idempotency-key/k1`,
+      url: `/bank/helocs/${helocId}/draws/by-idempotency-key?key=k1`,
     });
     expect(byKey.statusCode).toBe(200);
     expect(byKey.json().id).toBe(drawId);

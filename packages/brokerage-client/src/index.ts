@@ -14,7 +14,9 @@ export { FakeBrokerageClient } from './fake.js';
 export {
   providerOrderSchema,
   providerDepositSchema,
+  providerCashSchema,
   type ProviderOrder,
   type ProviderDeposit,
+  type ProviderCash,
 } from './schemas.js';
 export { IDEMPOTENCY_KEY_HEADER } from './http.js';

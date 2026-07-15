@@ -1,10 +1,4 @@
-export type DepositState =
-  | 'REQUESTED'
-  | 'PENDING'
-  | 'SETTLED'
-  | 'FAILED'
-  | 'UNKNOWN'
-  | 'REVERSED';
+export type DepositState = 'REQUESTED' | 'PENDING' | 'SETTLED' | 'FAILED' | 'UNKNOWN' | 'REVERSED';
 
 export type OrderState =
   | 'CREATED'
@@ -113,6 +107,7 @@ export interface WebhookEvent {
   dropped: boolean;
   signature: string;
   malformed: boolean;
+  externalAccountId?: string;
 }
 
 export type JobType =

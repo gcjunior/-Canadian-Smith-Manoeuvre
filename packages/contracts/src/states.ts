@@ -14,6 +14,7 @@ export const monthlyConversionCycleStateSchema = z.enum([
   'ORDER_FILLED',
   'RECONCILING',
   'COMPLETED',
+  'SKIPPED',
   'PAUSED',
   'FAILED',
 ]);
@@ -43,9 +44,20 @@ export const helocInterestChargeStateSchema = z.enum(['PENDING', 'POSTED', 'FAIL
 
 export const helocInterestPaymentStateSchema = z.enum(['PENDING', 'SETTLED', 'FAILED']);
 
+export const interestCycleStateSchema = z.enum([
+  'SCHEDULED',
+  'AWAITING_CHARGE',
+  'AWAITING_DEBIT',
+  'RECONCILING',
+  'COMPLETED',
+  'PAUSED',
+  'FAILED',
+]);
+
 export const reconciliationStateSchema = z.enum(['PENDING', 'PASSED', 'FAILED']);
 
 export type StrategyState = z.infer<typeof strategyStateSchema>;
 export type MonthlyConversionCycleState = z.infer<typeof monthlyConversionCycleStateSchema>;
 export type MoneyMovementState = z.infer<typeof moneyMovementStateSchema>;
 export type InvestmentOrderState = z.infer<typeof investmentOrderStateSchema>;
+export type InterestCycleState = z.infer<typeof interestCycleStateSchema>;

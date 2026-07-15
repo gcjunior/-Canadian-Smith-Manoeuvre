@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { positiveCadCentsSchema } from '@csm/contracts';
 
 import type { BankSimulatorEngine } from '../engine.js';
+import { SimulatorHttpError } from '../engine.js';
 
 const drawBodySchema = z
   .object({
@@ -116,6 +117,23 @@ export async function registerBankRoutes(
     }),
   );
 
+  app.get<{ Params: { helocId: string } }>(
+    '/bank/helocs/:helocId/interest-payments',
+    {
+      schema: {
+        tags: ['bank'],
+        summary: 'List HELOC interest payments (charge + payment + debit join)',
+      },
+    },
+    async (request) => ({
+      payments: engine.listInterestPayments(request.params.helocId).map((p) => ({
+        ...p,
+        chargeAmountCents: p.chargeAmountCents.toString(),
+        amountCents: p.amountCents.toString(),
+      })),
+    }),
+  );
+
   app.post<{ Params: { helocId: string } }>(
     '/bank/helocs/:helocId/draws',
     {
@@ -143,18 +161,21 @@ export async function registerBankRoutes(
       engine.drawPayload(engine.getDraw(request.params.helocId, request.params.drawId)),
   );
 
-  app.get<{ Params: { helocId: string; key: string } }>(
-    '/bank/helocs/:helocId/draws/by-idempotency-key/:key',
+  app.get<{ Params: { helocId: string }; Querystring: { key?: string } }>(
+    '/bank/helocs/:helocId/draws/by-idempotency-key',
     {
       schema: {
         tags: ['bank'],
         summary: 'Lookup HELOC draw by idempotency key',
       },
     },
-    async (request) =>
-      engine.drawPayload(
-        engine.getDrawByIdempotency(request.params.helocId, request.params.key),
-      ),
+    async (request) => {
+      const key = request.query.key;
+      if (!key) {
+        throw new SimulatorHttpError(400, 'Missing key query parameter');
+      }
+      return engine.drawPayload(engine.getDrawByIdempotency(request.params.helocId, key));
+    },
   );
 
   app.post(
@@ -180,20 +201,40 @@ export async function registerBankRoutes(
         summary: 'Get transfer by id',
       },
     },
-    async (request) =>
-      engine.transferPayload(engine.getTransfer(request.params.transferId)),
+    async (request) => engine.transferPayload(engine.getTransfer(request.params.transferId)),
   );
 
-  app.get<{ Params: { key: string } }>(
-    '/bank/transfers/by-idempotency-key/:key',
+  app.get<{ Querystring: { key?: string } }>(
+    '/bank/transfers/by-idempotency-key',
     {
       schema: {
         tags: ['bank'],
         summary: 'Lookup transfer by idempotency key',
       },
     },
-    async (request) =>
-      engine.transferPayload(engine.getTransferByIdempotency(request.params.key)),
+    async (request) => {
+      const key = request.query.key;
+      if (!key) {
+        throw new SimulatorHttpError(400, 'Missing key query parameter');
+      }
+      return engine.transferPayload(engine.getTransferByIdempotency(key));
+    },
+  );
+
+  app.get<{ Params: { accountId: string } }>(
+    '/bank/ordinary-accounts/:accountId/debits',
+    {
+      schema: {
+        tags: ['bank'],
+        summary: 'List ordinary-account debits',
+      },
+    },
+    async (request) => ({
+      debits: engine.listOrdinaryDebits(request.params.accountId).map((debit) => ({
+        ...debit,
+        amountCents: debit.amountCents.toString(),
+      })),
+    }),
   );
 
   app.get<{ Params: { accountId: string; debitId: string } }>(
@@ -205,10 +246,7 @@ export async function registerBankRoutes(
       },
     },
     async (request) => {
-      const debit = engine.getOrdinaryDebit(
-        request.params.accountId,
-        request.params.debitId,
-      );
+      const debit = engine.getOrdinaryDebit(request.params.accountId, request.params.debitId);
       return {
         ...debit,
         amountCents: debit.amountCents.toString(),

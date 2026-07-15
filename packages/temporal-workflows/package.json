@@ -17,12 +17,19 @@
     "clean": "rm -rf dist coverage",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "test:replay": "vitest run src/replay/replay.test.ts src/versioning/compatibility.test.ts",
+    "generate:replay-fixtures": "UPDATE_REPLAY_FIXTURES=1 vitest run src/replay/generate-fixtures.test.ts"
   },
   "dependencies": {
+    "@temporalio/common": "1.11.8",
+    "@temporalio/proto": "1.11.8",
     "@temporalio/workflow": "1.11.8"
   },
   "devDependencies": {
+    "@temporalio/client": "1.11.8",
+    "@temporalio/testing": "1.11.8",
+    "@temporalio/worker": "1.11.8",
     "typescript": "5.8.3",
     "vitest": "3.2.4"
   }

@@ -116,10 +116,15 @@ open http://localhost:8080
 # Unit / package tests
 pnpm test
 
+# Deterministic Edmonton demo (in-process sims + Temporal TestWorkflowEnvironment)
+pnpm test:demo
+
 # Optional test infrastructure (Postgres on 5433, Temporal on 7234)
 docker compose -f docker-compose.test.yml up -d postgres temporal
 docker compose -f docker-compose.test.yml up migrate
 ```
+
+Manual demo walkthrough: [`docs/demo.md`](./docs/demo.md) · [`apps/demo/README.md`](./apps/demo/README.md)
 
 ## Formatting, lint, typecheck
 

@@ -110,9 +110,7 @@ describe('BankClient HTTP', () => {
       logger: logger(),
       fetchImpl: async () =>
         new Response(
-          JSON.stringify(
-            drawBody({ state: 'FAILED', failureCode: 'INSUFFICIENT_HELOC_CREDIT' }),
-          ),
+          JSON.stringify(drawBody({ state: 'FAILED', failureCode: 'INSUFFICIENT_HELOC_CREDIT' })),
           { status: 422 },
         ),
     });
@@ -155,6 +153,31 @@ describe('BankClient HTTP', () => {
       kind: 'AMBIGUOUS_RESULT',
       idempotencyKey: 'amb-1',
     });
+    expect(postCount).toBe(1);
+  });
+
+  it('treats 503 during financial POST as AMBIGUOUS_RESULT without retry', async () => {
+    let postCount = 0;
+    const client = new BankClient({
+      baseUrl: 'http://bank.test',
+      logger: logger(),
+      fetchImpl: async (_url, init) => {
+        if (init?.method === 'POST') {
+          postCount += 1;
+          return new Response(JSON.stringify({ error: 'unavailable' }), { status: 503 });
+        }
+        return new Response('{}', { status: 500 });
+      },
+      maxGetAttempts: 3,
+    });
+    await expect(
+      client.initiateHelocDraw({
+        helocId: HELOC,
+        amountCents: 10_000n,
+        idempotencyKey: 'amb-503',
+        correlationId: CORRELATION,
+      }),
+    ).rejects.toMatchObject({ kind: 'AMBIGUOUS_RESULT', idempotencyKey: 'amb-503' });
     expect(postCount).toBe(1);
   });
 

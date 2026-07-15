@@ -13,6 +13,7 @@ const createAccountSchema = z
     externalAccountId: z.string().min(1),
     displayName: z.string().min(1),
     settledCashCents: nonNegativeCadCentsSchema.optional(),
+    id: z.string().uuid().optional(),
   })
   .strict();
 
@@ -77,6 +78,7 @@ export async function registerAdminRoutes(
     async (request, reply) => {
       const input = createAccountSchema.parse(request.body);
       const account = engine.createAccount({
+        ...(input.id !== undefined ? { id: input.id } : {}),
         externalAccountId: input.externalAccountId,
         displayName: input.displayName,
         ...(input.settledCashCents !== undefined

@@ -1,9 +1,11 @@
 import { z } from 'zod';
 
 import {
+  interestCycleStateSchema,
   investmentOrderStateSchema,
   moneyMovementStateSchema,
   monthlyConversionCycleStateSchema,
+  type InterestCycleState,
   type InvestmentOrderState,
   type MoneyMovementState,
   type MonthlyConversionCycleState,
@@ -24,7 +26,7 @@ export const CYCLE_TRANSITIONS: Record<
 > = {
   SCHEDULED: ['WAITING_FOR_MORTGAGE', 'PAUSED', 'FAILED'],
   WAITING_FOR_MORTGAGE: ['WAITING_FOR_HELOC', 'PAUSED', 'FAILED'],
-  WAITING_FOR_HELOC: ['HELOC_DRAW_PENDING', 'PAUSED', 'FAILED'],
+  WAITING_FOR_HELOC: ['HELOC_DRAW_PENDING', 'SKIPPED', 'PAUSED', 'FAILED'],
   HELOC_DRAW_PENDING: ['HELOC_DRAW_CONFIRMED', 'PAUSED', 'FAILED'],
   HELOC_DRAW_CONFIRMED: ['BROKERAGE_TRANSFER_PENDING', 'PAUSED', 'FAILED'],
   BROKERAGE_TRANSFER_PENDING: ['BROKERAGE_FUNDED', 'PAUSED', 'FAILED'],
@@ -33,6 +35,7 @@ export const CYCLE_TRANSITIONS: Record<
   ORDER_FILLED: ['RECONCILING', 'PAUSED', 'FAILED'],
   RECONCILING: ['COMPLETED', 'PAUSED', 'FAILED'],
   COMPLETED: [],
+  SKIPPED: [],
   PAUSED: [],
   FAILED: [],
 };
@@ -47,11 +50,22 @@ export const MONEY_MOVEMENT_TRANSITIONS: Record<MoneyMovementState, readonly Mon
     REVERSED: [],
   };
 
+export const INTEREST_CYCLE_TRANSITIONS: Record<InterestCycleState, readonly InterestCycleState[]> =
+  {
+    SCHEDULED: ['AWAITING_CHARGE', 'PAUSED', 'FAILED'],
+    AWAITING_CHARGE: ['AWAITING_DEBIT', 'PAUSED', 'FAILED'],
+    AWAITING_DEBIT: ['RECONCILING', 'PAUSED', 'FAILED'],
+    RECONCILING: ['COMPLETED', 'PAUSED', 'FAILED'],
+    COMPLETED: [],
+    PAUSED: [],
+    FAILED: [],
+  };
+
 export const INVESTMENT_ORDER_TRANSITIONS: Record<
   InvestmentOrderState,
   readonly InvestmentOrderState[]
 > = {
-  CREATED: ['SUBMITTED', 'CANCELLED', 'REJECTED'],
+  CREATED: ['SUBMITTED', 'CANCELLED', 'REJECTED', 'UNKNOWN'],
   SUBMITTED: ['PARTIALLY_FILLED', 'FILLED', 'CANCELLED', 'REJECTED', 'UNKNOWN'],
   PARTIALLY_FILLED: ['PARTIALLY_FILLED', 'FILLED', 'CANCELLED', 'UNKNOWN'],
   FILLED: [],
@@ -117,9 +131,24 @@ export function assertInvestmentOrderTransition(
   assertTransition('investmentOrder', INVESTMENT_ORDER_TRANSITIONS, from, to);
 }
 
+export function assertInterestCycleTransition(
+  from: InterestCycleState,
+  to: InterestCycleState,
+): void {
+  interestCycleStateSchema.parse(from);
+  interestCycleStateSchema.parse(to);
+  assertTransition('interestCycle', INTEREST_CYCLE_TRANSITIONS, from, to);
+}
+
 export const statusTransitionRequestSchema = z
   .object({
-    entity: z.enum(['strategy', 'monthlyConversionCycle', 'moneyMovement', 'investmentOrder']),
+    entity: z.enum([
+      'strategy',
+      'monthlyConversionCycle',
+      'moneyMovement',
+      'investmentOrder',
+      'interestCycle',
+    ]),
     from: z.string(),
     to: z.string(),
   })

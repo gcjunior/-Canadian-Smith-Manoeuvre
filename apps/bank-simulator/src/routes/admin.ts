@@ -21,6 +21,8 @@ const createAccountSchema = z
     kind: z.enum(['MORTGAGE', 'HELOC', 'ORDINARY', 'BROKERAGE_LINK']),
     displayAlias: z.string().min(1),
     providerAccountId: z.string().min(1),
+    /** Optional deterministic account UUID (aligned brokerage rail). */
+    id: z.string().uuid().optional(),
     balanceCents: nonNegativeCadCentsSchema.optional(),
     mortgage: z
       .object({
@@ -126,6 +128,7 @@ export async function registerAdminRoutes(
         kind: input.kind,
         displayAlias: input.displayAlias,
         providerAccountId: input.providerAccountId,
+        ...(input.id !== undefined ? { id: input.id } : {}),
         ...(input.balanceCents !== undefined ? { balanceCents: input.balanceCents } : {}),
         ...(input.mortgage !== undefined ? { mortgage: input.mortgage } : {}),
         ...(input.heloc !== undefined ? { heloc: input.heloc } : {}),

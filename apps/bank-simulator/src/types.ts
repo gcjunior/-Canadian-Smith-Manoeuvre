@@ -1,6 +1,6 @@
 export type MortgagePaymentState = 'SCHEDULED' | 'POSTED' | 'SETTLED' | 'REVERSED';
 export type DrawState = 'REQUESTED' | 'PENDING' | 'SETTLED' | 'FAILED' | 'UNKNOWN';
-export type TransferState = 'REQUESTED' | 'PENDING' | 'SETTLED' | 'FAILED' | 'UNKNOWN';
+export type TransferState = 'REQUESTED' | 'PENDING' | 'SETTLED' | 'FAILED' | 'REVERSED' | 'UNKNOWN';
 export type InterestChargeState = 'PENDING' | 'POSTED' | 'FAILED';
 export type InterestPaymentState = 'PENDING' | 'SETTLED' | 'FAILED';
 export type AccountKind = 'MORTGAGE' | 'HELOC' | 'ORDINARY' | 'BROKERAGE_LINK';
@@ -129,6 +129,26 @@ export interface OrdinaryDebit {
   state: InterestPaymentState;
   createdAt: string;
   settledAt: string | null;
+  interestPeriod?: string;
+  helocId?: string;
+  providerPaymentId?: string;
+}
+
+/** Joined charge + payment + debit view for interest payment list endpoints. */
+export interface InterestPaymentView {
+  chargeId: string;
+  providerChargeId: string;
+  interestPeriod: string;
+  chargeState: InterestChargeState;
+  chargeAmountCents: bigint;
+  paymentId: string;
+  providerPaymentId: string;
+  paymentState: InterestPaymentState;
+  ordinaryAccountId: string;
+  debitId: string | null;
+  amountCents: bigint;
+  failureCode: string | null;
+  settledAt: string | null;
 }
 
 export interface LedgerTxn {
@@ -160,6 +180,7 @@ export interface WebhookEvent {
   dropped: boolean;
   signature: string;
   malformed: boolean;
+  externalAccountId?: string;
 }
 
 export interface ScheduledJob {

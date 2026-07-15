@@ -7,7 +7,7 @@ export const openApiExamples = {
   tenantContext: {
     tenantId: '11111111-1111-4111-8111-111111111111',
     userId: '22222222-2222-4222-8222-222222222222',
-    roles: ['OWNER'],
+    roles: ['CUSTOMER'],
   },
   strategySetupRequest: {
     name: 'Primary residence Smith Manoeuvre',
@@ -25,15 +25,12 @@ export const openApiExamples = {
     },
   },
   strategyActivationRequest: {
-    strategyId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
     acknowledgeRiskDisclosures: true,
   },
   strategyPauseRequest: {
-    strategyId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
     reason: 'Reconciliation mismatch on HELOC draw',
   },
   strategyResumeRequest: {
-    strategyId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
     clearanceNote: 'Operator verified ledger trail and cleared safety pause',
   },
   helocDrawRequest: {

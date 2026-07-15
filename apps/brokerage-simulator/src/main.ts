@@ -1,5 +1,10 @@
 import { parseSimulatorEnv } from '@csm/contracts';
-import { createLogger, registerGracefulShutdown } from '@csm/observability';
+import {
+  createLogger,
+  initTelemetry,
+  registerGracefulShutdown,
+  shutdownTelemetry,
+} from '@csm/observability';
 
 import { buildSimulatorApp } from './app.js';
 
@@ -7,6 +12,14 @@ async function main(): Promise<void> {
   const env = parseSimulatorEnv(process.env, {
     serviceName: 'brokerage-simulator',
     port: 3003,
+  });
+  await initTelemetry({
+    serviceName: env.SERVICE_NAME,
+    serviceVersion: env.SERVICE_VERSION,
+    ...(env.OTEL_EXPORTER_OTLP_ENDPOINT !== undefined
+      ? { otlpEndpoint: env.OTEL_EXPORTER_OTLP_ENDPOINT }
+      : {}),
+    enabled: env.OTEL_ENABLED ?? true,
   });
   const logger = createLogger({
     service: env.SERVICE_NAME,
@@ -20,6 +33,9 @@ async function main(): Promise<void> {
   registerGracefulShutdown(logger, [
     async () => {
       await app.close();
+    },
+    async () => {
+      await shutdownTelemetry();
     },
   ]);
 

@@ -16,9 +16,9 @@ describe('error classification', () => {
   });
 
   it('marks transport/rate-limit as retryable, ambiguous as not', () => {
-    expect(
-      new ProviderClientError({ kind: 'RETRYABLE_TRANSPORT', message: 'x' }).retryable,
-    ).toBe(true);
+    expect(new ProviderClientError({ kind: 'RETRYABLE_TRANSPORT', message: 'x' }).retryable).toBe(
+      true,
+    );
     expect(new ProviderClientError({ kind: 'RATE_LIMITED', message: 'x' }).retryable).toBe(true);
     expect(new ProviderClientError({ kind: 'AMBIGUOUS_RESULT', message: 'x' }).retryable).toBe(
       false,

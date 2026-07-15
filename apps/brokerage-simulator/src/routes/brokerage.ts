@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { positiveCadCentsSchema } from '@csm/contracts';
 
 import type { BrokerageSimulatorEngine } from '../engine.js';
+import { SimulatorHttpError } from '../engine.js';
 
 const depositBodySchema = z
   .object({
@@ -73,17 +74,21 @@ export async function registerBrokerageRoutes(
     {
       schema: { tags: ['brokerage'], summary: 'Get deposit by id' },
     },
-    async (request) =>
-      engine.depositPayload(engine.getDeposit(request.params.depositId)),
+    async (request) => engine.depositPayload(engine.getDeposit(request.params.depositId)),
   );
 
-  app.get<{ Params: { key: string } }>(
-    '/brokerage/deposits/by-idempotency-key/:key',
+  app.get<{ Querystring: { key?: string } }>(
+    '/brokerage/deposits/by-idempotency-key',
     {
       schema: { tags: ['brokerage'], summary: 'Lookup deposit by idempotency key' },
     },
-    async (request) =>
-      engine.depositPayload(engine.getDepositByIdempotency(request.params.key)),
+    async (request) => {
+      const key = request.query.key;
+      if (!key) {
+        throw new SimulatorHttpError(400, 'Missing key query parameter');
+      }
+      return engine.depositPayload(engine.getDepositByIdempotency(key));
+    },
   );
 
   app.post(
@@ -109,12 +114,17 @@ export async function registerBrokerageRoutes(
     async (request) => engine.orderPayload(engine.getOrder(request.params.orderId)),
   );
 
-  app.get<{ Params: { key: string } }>(
-    '/brokerage/orders/by-idempotency-key/:key',
+  app.get<{ Querystring: { key?: string } }>(
+    '/brokerage/orders/by-idempotency-key',
     {
       schema: { tags: ['brokerage'], summary: 'Lookup order by idempotency key' },
     },
-    async (request) =>
-      engine.orderPayload(engine.getOrderByIdempotency(request.params.key)),
+    async (request) => {
+      const key = request.query.key;
+      if (!key) {
+        throw new SimulatorHttpError(400, 'Missing key query parameter');
+      }
+      return engine.orderPayload(engine.getOrderByIdempotency(key));
+    },
   );
 }

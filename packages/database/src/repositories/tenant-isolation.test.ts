@@ -104,8 +104,26 @@ describe('tenant isolation and uniqueness', () => {
   });
 
   beforeEach(async () => {
+    await prisma.dailyReconciliationReport.deleteMany();
+    await prisma.reconciliationItem.deleteMany();
+    await prisma.reconciliation.deleteMany();
     await prisma.ledgerEntry.deleteMany();
+    await prisma.investmentFill.deleteMany();
+    await prisma.investmentOrder.deleteMany();
+    await prisma.brokerageDeposit.deleteMany();
+    await prisma.moneyMovement.deleteMany();
+    await prisma.interestCycle.deleteMany();
+    await prisma.helocInterestPayment.deleteMany();
+    await prisma.helocInterestCharge.deleteMany();
+    await prisma.helocCreditEvent.deleteMany();
+    await prisma.workflowReference.deleteMany();
+    await prisma.providerWebhookEvent.deleteMany();
+    await prisma.operationalException.deleteMany();
+    await prisma.auditDocument.deleteMany();
+    await prisma.idempotencyRecord.deleteMany();
     await prisma.monthlyConversionCycle.deleteMany();
+    await prisma.strategySchedule.deleteMany();
+    await prisma.mortgagePayment.deleteMany();
     await prisma.strategyInvestmentPolicy.deleteMany();
     await prisma.strategy.deleteMany();
     await prisma.mortgage.deleteMany();
@@ -114,8 +132,6 @@ describe('tenant isolation and uniqueness', () => {
     await prisma.ordinaryBankAccount.deleteMany();
     await prisma.financialAccount.deleteMany();
     await prisma.financialConnection.deleteMany();
-    await prisma.idempotencyRecord.deleteMany();
-    await prisma.providerWebhookEvent.deleteMany();
     await prisma.user.deleteMany();
     await prisma.tenant.deleteMany();
   });
@@ -217,6 +233,9 @@ describe('tenant isolation and uniqueness', () => {
         businessEventId: 'draw:cycle-1:leg-1',
         direction: 'CREDIT',
         amountCents: 500_00n,
+        currencyCode: 'CAD',
+        accountCategory: 'LIABILITY',
+        strategyId: a.strategy.id,
         correlationId,
         narrative: 'HELOC draw',
       },
@@ -229,11 +248,20 @@ describe('tenant isolation and uniqueness', () => {
           businessEventId: 'draw:cycle-1:leg-1',
           direction: 'CREDIT',
           amountCents: 500_00n,
+          accountCategory: 'LIABILITY',
           correlationId,
           narrative: 'HELOC draw duplicate',
         },
       ]),
     ).rejects.toMatchObject({ code: 'DUPLICATE_ENTITY' });
+
+    // Append-only: repository exposes no update/delete methods.
+    expect('update' in a.repos.ledger).toBe(false);
+    expect('delete' in a.repos.ledger).toBe(false);
+
+    const again = await a.repos.ledger.findByBusinessEventId(a.tenant.id, 'draw:cycle-1:leg-1');
+    expect(again?.amountCents).toBe(500_00n);
+    expect(again?.accountCategory).toBe('LIABILITY');
   });
 
   it('allows same email across tenants but not within one tenant', async () => {

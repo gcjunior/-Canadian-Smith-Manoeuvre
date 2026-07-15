@@ -14,6 +14,10 @@ Architecture documentation for the **Canadian Smith Manoeuvre automation simulat
 | [failure-model.md](./failure-model.md)                             | Failure taxonomy, timeout reconcile, recovery                                                 |
 | [domain-glossary.md](./domain-glossary.md)                         | Shared vocabulary                                                                             |
 | [data-model-invariants.md](./data-model-invariants.md)             | FK vs domain invariants for the Prisma model                                                  |
+| [accounting-model.md](./accounting-model.md)                       | Append-only ledger, \$770 conversion example, recon chains, integrity CLI                     |
+| [operations-runbook.md](./operations-runbook.md)                   | Health/ready, metrics, alerts, correlation, safe restart & Workflow resume                    |
+| [temporal-versioning.md](./temporal-versioning.md)                 | Determinism, patched(), replay fixtures, Worker deploy, Continue-As-New policy                |
+| [demo.md](./demo.md)                                               | Edmonton deterministic demo seed / accelerated clock / e2e proofs                             |
 | [decisions/](./decisions/)                                         | Architecture Decision Records                                                                 |
 
 ## Mermaid diagram map

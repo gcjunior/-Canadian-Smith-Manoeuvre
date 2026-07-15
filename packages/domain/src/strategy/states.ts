@@ -13,6 +13,7 @@ export const MONTHLY_CONVERSION_CYCLE_STATES = [
   'ORDER_FILLED',
   'RECONCILING',
   'COMPLETED',
+  'SKIPPED',
   'PAUSED',
   'FAILED',
 ] as const;

@@ -1,0 +1,34 @@
+{
+  "name": "@csm/demo",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "seed": "tsx src/cli.ts seed",
+    "scenario": "tsx src/cli.ts scenario",
+    "clock:advance": "tsx src/cli.ts clock-advance",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@csm/bank-client": "workspace:*",
+    "@csm/bank-simulator": "workspace:*",
+    "@csm/brokerage-client": "workspace:*",
+    "@csm/brokerage-simulator": "workspace:*",
+    "@csm/contracts": "workspace:*",
+    "@csm/database": "workspace:*",
+    "@csm/domain": "workspace:*",
+    "@csm/observability": "workspace:*",
+    "@csm/temporal-activities": "workspace:*",
+    "@csm/temporal-workflows": "workspace:*"
+  },
+  "devDependencies": {
+    "@temporalio/client": "1.11.8",
+    "@temporalio/testing": "1.11.8",
+    "@temporalio/worker": "1.11.8",
+    "@types/node": "22.16.0",
+    "tsx": "4.20.3",
+    "typescript": "5.8.3",
+    "vitest": "3.2.4"
+  }
+}

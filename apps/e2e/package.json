@@ -1,0 +1,20 @@
+{
+  "name": "@csm/e2e",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:compose": "vitest run --config vitest.compose.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@csm/contracts": "workspace:*",
+    "@csm/database": "workspace:*",
+    "@csm/test-support": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "5.8.3",
+    "vitest": "3.2.4"
+  }
+}

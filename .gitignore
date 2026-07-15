@@ -9,3 +9,6 @@ coverage
 .turbo
 *.tsbuildinfo
 docker-data
+.pnpm-store/
+apps/web/test-results/
+apps/web/playwright-report/

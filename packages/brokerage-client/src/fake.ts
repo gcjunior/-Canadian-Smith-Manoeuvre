@@ -1,10 +1,11 @@
 import { ProviderClientError } from './errors.js';
-import type { ProviderDeposit, ProviderOrder } from './schemas.js';
+import type { ProviderCash, ProviderDeposit, ProviderOrder } from './schemas.js';
 
 /** In-memory brokerage provider for unit tests — no network. */
 export class FakeBrokerageClient {
   deposits = new Map<string, ProviderDeposit>();
   orders = new Map<string, ProviderOrder>();
+  cash = new Map<string, ProviderCash>();
   failNextOrderWith?: ProviderClientError | undefined;
   failNextDepositWith?: ProviderClientError | undefined;
 
@@ -15,6 +16,22 @@ export class FakeBrokerageClient {
       correlationId,
       simulator: 'brokerage',
     };
+  }
+
+  async getCash(accountId: string, _correlationId: string): Promise<ProviderCash> {
+    const value = this.cash.get(accountId);
+    if (!value) {
+      return {
+        accountId,
+        currencyCode: 'CAD',
+        settledCashCents: 0n,
+        pendingCashCents: 0n,
+        availableCashCents: 0n,
+        restricted: false,
+        observedAt: new Date().toISOString(),
+      };
+    }
+    return value;
   }
 
   async initiateDeposit(input: {
@@ -58,6 +75,22 @@ export class FakeBrokerageClient {
     return deposit;
   }
 
+  async getDeposit(depositId: string, correlationId: string) {
+    const deposit =
+      this.deposits.get(depositId) ??
+      [...this.deposits.values()].find((d) => d.providerDepositId === depositId);
+    if (!deposit) {
+      throw new ProviderClientError({
+        kind: 'BUSINESS_REJECTION',
+        message: 'Deposit not found',
+        statusCode: 404,
+        correlationId,
+        operation: 'fake.getDeposit',
+      });
+    }
+    return deposit;
+  }
+
   async findDepositByIdempotencyKey(idempotencyKey: string, correlationId: string) {
     const deposit = [...this.deposits.values()].find((d) => d.idempotencyKey === idempotencyKey);
     if (!deposit) {
@@ -89,6 +122,28 @@ export class FakeBrokerageClient {
         });
       }
       throw error;
+    }
+  }
+
+  settleDeposit(idempotencyKey: string): void {
+    for (const deposit of this.deposits.values()) {
+      if (deposit.idempotencyKey === idempotencyKey) {
+        deposit.state = 'SETTLED';
+        deposit.settledAt = new Date().toISOString();
+        const cash = this.cash.get(deposit.accountId) ?? {
+          accountId: deposit.accountId,
+          currencyCode: 'CAD' as const,
+          settledCashCents: 0n,
+          pendingCashCents: 0n,
+          availableCashCents: 0n,
+          restricted: false,
+          observedAt: new Date().toISOString(),
+        };
+        cash.settledCashCents += deposit.amountCents;
+        cash.availableCashCents += deposit.amountCents;
+        cash.observedAt = new Date().toISOString();
+        this.cash.set(deposit.accountId, cash);
+      }
     }
   }
 
@@ -143,6 +198,22 @@ export class FakeBrokerageClient {
     return order;
   }
 
+  async getOrder(orderId: string, correlationId: string) {
+    const order =
+      this.orders.get(orderId) ??
+      [...this.orders.values()].find((o) => o.providerOrderId === orderId);
+    if (!order) {
+      throw new ProviderClientError({
+        kind: 'BUSINESS_REJECTION',
+        message: 'Order not found',
+        statusCode: 404,
+        correlationId,
+        operation: 'fake.getOrder',
+      });
+    }
+    return order;
+  }
+
   async findOrderByIdempotencyKey(idempotencyKey: string, correlationId: string) {
     const order = [...this.orders.values()].find((o) => o.idempotencyKey === idempotencyKey);
     if (!order) {
@@ -174,6 +245,23 @@ export class FakeBrokerageClient {
         });
       }
       throw error;
+    }
+  }
+
+  fillOrder(idempotencyKey: string): void {
+    for (const order of this.orders.values()) {
+      if (order.idempotencyKey === idempotencyKey) {
+        order.state = 'FILLED';
+        order.submittedAt = order.submittedAt ?? new Date().toISOString();
+        order.filledAt = new Date().toISOString();
+        order.filledQuantity = order.quantity ?? '1';
+        const cash = this.cash.get(order.accountId);
+        if (cash) {
+          cash.settledCashCents -= order.notionalCents;
+          cash.availableCashCents -= order.notionalCents;
+          cash.observedAt = new Date().toISOString();
+        }
+      }
     }
   }
 }

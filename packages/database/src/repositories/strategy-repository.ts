@@ -9,6 +9,7 @@ export interface StrategyCreateInput {
   name: string;
   timezone: string;
   expectedPaymentDay: number;
+  expectedInterestChargeDay?: number;
   mortgageAccountId: string;
   helocAccountId: string;
   bankAccountId: string;
@@ -21,6 +22,21 @@ export interface StrategyCreateInput {
 export interface StrategyRepository {
   create(tenantId: string, input: StrategyCreateInput): Promise<Strategy>;
   findById(tenantId: string, strategyId: string): Promise<Strategy | null>;
+  listForUser(tenantId: string, userId: string): Promise<Strategy[]>;
+  listForTenant(tenantId: string): Promise<Strategy[]>;
+  updateDraft(
+    tenantId: string,
+    strategyId: string,
+    version: number,
+    patch: {
+      name?: string;
+      timezone?: string;
+      expectedPaymentDay?: number;
+      symbol?: string;
+      userMonthlyCapCents?: bigint;
+      allowFractionalShares?: boolean;
+    },
+  ): Promise<Strategy>;
   updateState(
     tenantId: string,
     strategyId: string,
@@ -29,6 +45,11 @@ export interface StrategyRepository {
     pauseReason?: string,
   ): Promise<Strategy>;
   findPolicy(tenantId: string, strategyId: string): Promise<StrategyInvestmentPolicy | null>;
+  findActiveOrPausedUsingAccounts(
+    tenantId: string,
+    accountIds: string[],
+    excludeStrategyId?: string,
+  ): Promise<Strategy[]>;
 }
 
 export function createStrategyRepository(db: DbClient): StrategyRepository {
@@ -74,6 +95,7 @@ export function createStrategyRepository(db: DbClient): StrategyRepository {
             name: input.name,
             timezone,
             expectedPaymentDay: input.expectedPaymentDay,
+            expectedInterestChargeDay: input.expectedInterestChargeDay ?? 1,
             mortgageAccountId: input.mortgageAccountId,
             helocAccountId: input.helocAccountId,
             bankAccountId: input.bankAccountId,
@@ -95,6 +117,73 @@ export function createStrategyRepository(db: DbClient): StrategyRepository {
 
     findById(tenantId, strategyId) {
       return db.strategy.findFirst({ where: { id: strategyId, tenantId } });
+    },
+
+    listForUser(tenantId, userId) {
+      return db.strategy.findMany({
+        where: { tenantId, userId },
+        orderBy: { createdAt: 'desc' },
+      });
+    },
+
+    listForTenant(tenantId) {
+      return db.strategy.findMany({
+        where: { tenantId },
+        orderBy: { createdAt: 'desc' },
+      });
+    },
+
+    async updateDraft(tenantId, strategyId, version, patch) {
+      try {
+        const current = await db.strategy.findFirst({
+          where: { id: strategyId, tenantId, version, state: 'DRAFT' },
+        });
+        if (!current) {
+          throw new DomainError('NOT_FOUND', 'Draft strategy not found or version conflict');
+        }
+        await db.strategy.update({
+          where: { id: strategyId },
+          data: {
+            ...(patch.name !== undefined ? { name: patch.name } : {}),
+            ...(patch.timezone !== undefined
+              ? { timezone: asCanadianTimezone(patch.timezone) }
+              : {}),
+            ...(patch.expectedPaymentDay !== undefined
+              ? { expectedPaymentDay: patch.expectedPaymentDay }
+              : {}),
+            version: { increment: 1 },
+          },
+        });
+        if (
+          patch.symbol !== undefined ||
+          patch.userMonthlyCapCents !== undefined ||
+          patch.allowFractionalShares !== undefined
+        ) {
+          await db.strategyInvestmentPolicy.updateMany({
+            where: { strategyId, tenantId },
+            data: {
+              ...(patch.symbol !== undefined ? { symbol: patch.symbol } : {}),
+              ...(patch.userMonthlyCapCents !== undefined
+                ? { userMonthlyCapCents: patch.userMonthlyCapCents }
+                : {}),
+              ...(patch.allowFractionalShares !== undefined
+                ? { allowFractionalShares: patch.allowFractionalShares }
+                : {}),
+              version: { increment: 1 },
+            },
+          });
+        }
+        const strategy = await db.strategy.findFirst({ where: { id: strategyId, tenantId } });
+        if (!strategy) {
+          throw new DomainError('NOT_FOUND', 'Strategy not found');
+        }
+        return strategy;
+      } catch (error) {
+        if (error instanceof DomainError) {
+          throw error;
+        }
+        mapPrismaError(error);
+      }
     },
 
     async updateState(tenantId, strategyId, version, state, pauseReason) {
@@ -125,6 +214,22 @@ export function createStrategyRepository(db: DbClient): StrategyRepository {
 
     findPolicy(tenantId, strategyId) {
       return db.strategyInvestmentPolicy.findFirst({ where: { strategyId, tenantId } });
+    },
+
+    findActiveOrPausedUsingAccounts(tenantId, accountIds, excludeStrategyId) {
+      return db.strategy.findMany({
+        where: {
+          tenantId,
+          state: { in: ['ACTIVE', 'PAUSED'] },
+          ...(excludeStrategyId !== undefined ? { id: { not: excludeStrategyId } } : {}),
+          OR: [
+            { mortgageAccountId: { in: accountIds } },
+            { helocAccountId: { in: accountIds } },
+            { bankAccountId: { in: accountIds } },
+            { brokerageAccountId: { in: accountIds } },
+          ],
+        },
+      });
     },
   };
 }

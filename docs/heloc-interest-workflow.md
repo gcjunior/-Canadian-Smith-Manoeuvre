@@ -22,7 +22,7 @@ Critical invariant:
 - Temporal Schedule (e.g. expected interest posting window), and/or
 - Bank webhook when an interest charge is posted → Signal to wake the workflow.
 
-Workflow id (deterministic): `heloc-interest:{strategyId}:{interestPeriodId}`.
+Workflow id (deterministic): `heloc-interest/{tenantId}/{strategyId}/{interestPeriod}`.
 
 ## Flow
 

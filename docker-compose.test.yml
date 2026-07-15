@@ -56,3 +56,41 @@ services:
       postgres:
         condition: service_healthy
     restart: 'no'
+
+  bank-simulator:
+    build:
+      context: .
+      dockerfile: apps/bank-simulator/Dockerfile
+      args:
+        NODE_IMAGE: node:20.19.3-alpine3.21
+    environment:
+      NODE_ENV: test
+      SERVICE_NAME: bank-simulator
+      HOST: 0.0.0.0
+      PORT: 3002
+      WEBHOOK_SIGNING_SECRET: test-webhook-secret
+      WEBHOOKS_ENABLED: 'false'
+    ports:
+      - '3002:3002'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  brokerage-simulator:
+    build:
+      context: .
+      dockerfile: apps/brokerage-simulator/Dockerfile
+      args:
+        NODE_IMAGE: node:20.19.3-alpine3.21
+    environment:
+      NODE_ENV: test
+      SERVICE_NAME: brokerage-simulator
+      HOST: 0.0.0.0
+      PORT: 3003
+      WEBHOOK_SIGNING_SECRET: test-webhook-secret
+      WEBHOOKS_ENABLED: 'false'
+    ports:
+      - '3003:3003'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully

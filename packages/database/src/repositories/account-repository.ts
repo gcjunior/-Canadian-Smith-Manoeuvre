@@ -34,6 +34,21 @@ export interface AccountRepository {
     },
   ): Promise<FinancialAccount>;
   findAccountById(tenantId: string, accountId: string): Promise<FinancialAccount | null>;
+  findAccountByProviderAccountId(
+    tenantId: string | undefined,
+    providerAccountId: string,
+  ): Promise<FinancialAccount | null>;
+  findAccountByProviderAccountIdAnyTenant(
+    providerAccountId: string,
+  ): Promise<FinancialAccount | null>;
+  /** All accounts sharing a provider id (collision detection across tenants). */
+  findAccountsByProviderAccountId(providerAccountId: string): Promise<FinancialAccount[]>;
+  listConnectionsForUser(tenantId: string, userId: string): Promise<FinancialConnection[]>;
+  listAccountsForUser(tenantId: string, userId: string): Promise<FinancialAccount[]>;
+  findBrokerageDetail(tenantId: string, accountId: string): Promise<BrokerageAccount | null>;
+  findMortgageDetail(tenantId: string, accountId: string): Promise<Mortgage | null>;
+  findHelocDetail(tenantId: string, accountId: string): Promise<Heloc | null>;
+  findOrdinaryBankDetail(tenantId: string, accountId: string): Promise<OrdinaryBankAccount | null>;
   createMortgage(
     tenantId: string,
     input: {
@@ -86,6 +101,44 @@ export function createAccountRepository(db: DbClient): AccountRepository {
     },
     findAccountById(tenantId, accountId) {
       return db.financialAccount.findFirst({ where: { id: accountId, tenantId } });
+    },
+    findAccountByProviderAccountId(tenantId, providerAccountId) {
+      return db.financialAccount.findFirst({
+        where: {
+          providerAccountId,
+          ...(tenantId !== undefined ? { tenantId } : {}),
+        },
+      });
+    },
+    findAccountByProviderAccountIdAnyTenant(providerAccountId) {
+      return db.financialAccount.findFirst({ where: { providerAccountId } });
+    },
+    findAccountsByProviderAccountId(providerAccountId) {
+      return db.financialAccount.findMany({ where: { providerAccountId } });
+    },
+    listConnectionsForUser(tenantId, userId) {
+      return db.financialConnection.findMany({
+        where: { tenantId, userId },
+        orderBy: { createdAt: 'desc' },
+      });
+    },
+    listAccountsForUser(tenantId, userId) {
+      return db.financialAccount.findMany({
+        where: { tenantId, userId },
+        orderBy: { createdAt: 'desc' },
+      });
+    },
+    findBrokerageDetail(tenantId, accountId) {
+      return db.brokerageAccount.findFirst({ where: { tenantId, accountId } });
+    },
+    findMortgageDetail(tenantId, accountId) {
+      return db.mortgage.findFirst({ where: { tenantId, accountId } });
+    },
+    findHelocDetail(tenantId, accountId) {
+      return db.heloc.findFirst({ where: { tenantId, accountId } });
+    },
+    findOrdinaryBankDetail(tenantId, accountId) {
+      return db.ordinaryBankAccount.findFirst({ where: { tenantId, accountId } });
     },
     async createMortgage(tenantId, input) {
       try {

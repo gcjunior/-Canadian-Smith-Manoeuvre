@@ -5,12 +5,14 @@ import type { Logger } from '@csm/observability';
 import type { Clock } from './clock.js';
 import { createSeededRng } from './rng.js';
 import type { BankScenarioConfig, DeterministicFailureStep } from './scenario/schema.js';
-import { BankSimulatorStore } from './store.js';
+import { type BankSimulatorStore } from './store.js';
 import type {
   BankTransfer,
   HelocDraw,
   InterestCharge,
+  InterestPaymentView,
   MortgagePayment,
+  ScheduledJob,
   SimAccount,
   SimHeloc,
   SimMortgage,
@@ -39,6 +41,29 @@ export interface BankSimulatorDeps {
 
 function hashRequest(payload: unknown): string {
   return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+}
+
+function extractSimulatorExternalAccountId(payload: Record<string, unknown>): string {
+  for (const key of [
+    'mortgageId',
+    'helocId',
+    'accountId',
+    'debitAccountId',
+    'sourceAccountId',
+    'externalAccountId',
+  ]) {
+    const value = payload[key];
+    if (typeof value === 'string' && value.length > 0) {
+      return value;
+    }
+  }
+  return 'unknown-account';
+}
+
+function buildSimulatorProviderEventId(type: string, payload: Record<string, unknown>): string {
+  const id = typeof payload.id === 'string' ? payload.id : randomUUID();
+  const state = typeof payload.state === 'string' ? payload.state : 'na';
+  return `${type}:${id}:${state}`;
 }
 
 function moneyJson(cents: bigint): string {
@@ -102,6 +127,8 @@ export class BankSimulatorEngine {
     kind: SimAccount['kind'];
     displayAlias: string;
     providerAccountId: string;
+    /** Optional fixed account UUID — used to align bank rails with brokerage account IDs. */
+    id?: string;
     balanceCents?: bigint;
     mortgage?: { outstandingPrincipalCents: bigint; expectedPaymentDay: number };
     heloc?: {
@@ -118,8 +145,12 @@ export class BankSimulatorEngine {
       throw new SimulatorHttpError(404, 'User not found');
     }
     const scenario = this.requireScenario();
+    const accountId = input.id ?? randomUUID();
+    if (this.store.accounts.has(accountId)) {
+      throw new SimulatorHttpError(409, 'Account id already exists');
+    }
     const account: SimAccount = {
-      id: randomUUID(),
+      id: accountId,
       userId: input.userId,
       kind: input.kind,
       displayAlias: input.displayAlias,
@@ -127,9 +158,7 @@ export class BankSimulatorEngine {
       currencyCode: 'CAD',
       balanceCents:
         input.balanceCents ??
-        (input.kind === 'ORDINARY'
-          ? scenario.initialBalances.ordinaryBankBalanceCents
-          : 0n),
+        (input.kind === 'ORDINARY' ? scenario.initialBalances.ordinaryBankBalanceCents : 0n),
       createdAt: this.iso(),
     };
     this.store.accounts.set(account.id, account);
@@ -203,10 +232,7 @@ export class BankSimulatorEngine {
   }): MortgagePayment {
     const scenario = this.requireScenario();
     this.maybeFail('scheduleMortgage');
-    const mortgage = this.store.mortgages.get(input.mortgageId);
-    if (!mortgage) {
-      throw new SimulatorHttpError(404, 'Mortgage not found');
-    }
+    const mortgage = this.requireMortgage(input.mortgageId);
 
     const payment: MortgagePayment = {
       id: randomUUID(),
@@ -228,8 +254,9 @@ export class BankSimulatorEngine {
     return payment;
   }
 
-  listMortgagePayments(mortgageId: string): MortgagePayment[] {
-    return [...this.store.payments.values()].filter((p) => p.mortgageId === mortgageId);
+  listMortgagePayments(mortgageIdOrAccountId: string): MortgagePayment[] {
+    const mortgage = this.requireMortgage(mortgageIdOrAccountId);
+    return [...this.store.payments.values()].filter((p) => p.mortgageId === mortgage.id);
   }
 
   getHelocAvailability(helocId: string): {
@@ -249,9 +276,7 @@ export class BankSimulatorEngine {
       helocId,
       availableCreditCents: moneyJson(stale ? heloc.existingAvailableCreditCents : available),
       existingAvailableCreditCents: moneyJson(heloc.existingAvailableCreditCents),
-      newlyAvailableCreditCents: moneyJson(
-        stale ? 0n : heloc.newlyAvailableCreditCents,
-      ),
+      newlyAvailableCreditCents: moneyJson(stale ? 0n : heloc.newlyAvailableCreditCents),
       creditLimitCents: moneyJson(heloc.creditLimitCents),
       balanceOwedCents: moneyJson(heloc.balanceOwedCents),
       observedAt: this.iso(),
@@ -259,17 +284,24 @@ export class BankSimulatorEngine {
     };
   }
 
-  listInterestCharges(helocId: string): InterestCharge[] {
-    return [...this.store.interestCharges.values()].filter((c) => c.helocId === helocId);
+  listInterestCharges(helocIdOrAccountId: string): InterestCharge[] {
+    const heloc = this.requireHeloc(helocIdOrAccountId);
+    return [...this.store.interestCharges.values()].filter((c) => c.helocId === heloc.id);
   }
 
   createHelocDraw(
-    helocId: string,
+    helocIdOrAccountId: string,
     input: { amountCents: bigint; idempotencyKey: string },
   ): { statusCode: number; body: unknown } {
     const scenario = this.requireScenario();
+    const heloc = this.requireHeloc(helocIdOrAccountId);
+    const facilityId = heloc.id;
     const scope = 'heloc.draw';
-    const requestHash = hashRequest({ helocId, ...input, amountCents: input.amountCents.toString() });
+    const requestHash = hashRequest({
+      helocId: facilityId,
+      ...input,
+      amountCents: input.amountCents.toString(),
+    });
     const existing = this.store.idempotencyLookup(scope, input.idempotencyKey);
     if (existing) {
       if (existing.requestHash !== requestHash) {
@@ -280,23 +312,29 @@ export class BankSimulatorEngine {
 
     this.maybeFail('draw');
 
-    const heloc = this.requireHeloc(helocId);
     const available = heloc.existingAvailableCreditCents + heloc.newlyAvailableCreditCents;
 
-    if (
-      this.consumeFailure('INSUFFICIENT_HELOC_CREDIT') ||
-      input.amountCents > available
-    ) {
+    const rejectedCode = this.consumeFailure('HELOC_BLOCKED')
+      ? 'HELOC_BLOCKED'
+      : this.consumeFailure('HELOC_DELINQUENT')
+        ? 'HELOC_DELINQUENT'
+        : this.consumeFailure('DRAW_REJECTED')
+          ? 'DRAW_REJECTED'
+          : this.consumeFailure('INSUFFICIENT_HELOC_CREDIT') || input.amountCents > available
+            ? 'INSUFFICIENT_HELOC_CREDIT'
+            : null;
+
+    if (rejectedCode) {
       const failed: HelocDraw = {
         id: randomUUID(),
-        helocId,
+        helocId: facilityId,
         amountCents: input.amountCents,
         idempotencyKey: input.idempotencyKey,
         state: 'FAILED',
         providerTransactionId: `draw_${randomUUID()}`,
         requestedAt: this.iso(),
         settledAt: null,
-        failureCode: 'INSUFFICIENT_HELOC_CREDIT',
+        failureCode: rejectedCode,
         requestHash,
       };
       this.store.draws.set(failed.id, failed);
@@ -308,7 +346,7 @@ export class BankSimulatorEngine {
 
     const draw: HelocDraw = {
       id: randomUUID(),
-      helocId,
+      helocId: facilityId,
       amountCents: input.amountCents,
       idempotencyKey: input.idempotencyKey,
       state: 'REQUESTED',
@@ -338,16 +376,18 @@ export class BankSimulatorEngine {
     return { statusCode: 202, body };
   }
 
-  getDraw(helocId: string, drawId: string): HelocDraw {
+  getDraw(helocIdOrAccountId: string, drawId: string): HelocDraw {
+    const facilityId = this.requireHeloc(helocIdOrAccountId).id;
     const draw = this.store.draws.get(drawId);
-    if (!draw || draw.helocId !== helocId) {
+    if (!draw || draw.helocId !== facilityId) {
       throw new SimulatorHttpError(404, 'Draw not found');
     }
     return draw;
   }
 
-  getDrawByIdempotency(helocId: string, key: string): HelocDraw {
-    const draw = this.store.findDrawByIdempotency(helocId, key);
+  getDrawByIdempotency(helocIdOrAccountId: string, key: string): HelocDraw {
+    const facilityId = this.requireHeloc(helocIdOrAccountId).id;
+    const draw = this.store.findDrawByIdempotency(facilityId, key);
     if (!draw) {
       throw new SimulatorHttpError(404, 'Draw not found for idempotency key');
     }
@@ -381,6 +421,27 @@ export class BankSimulatorEngine {
     }
     if (!this.store.accounts.has(input.destinationAccountId)) {
       throw new SimulatorHttpError(404, 'Destination account not found');
+    }
+
+    if (this.consumeFailure('TRANSFER_REJECTED')) {
+      const failed: BankTransfer = {
+        id: randomUUID(),
+        sourceAccountId: input.sourceAccountId,
+        destinationAccountId: input.destinationAccountId,
+        amountCents: input.amountCents,
+        idempotencyKey: input.idempotencyKey,
+        state: 'FAILED',
+        providerTransactionId: `xfer_${randomUUID()}`,
+        requestedAt: this.iso(),
+        settledAt: null,
+        failureCode: 'TRANSFER_REJECTED',
+        requestHash,
+      };
+      this.store.transfers.set(failed.id, failed);
+      const body = this.transferPayload(failed);
+      this.persistIdempotency(scope, input.idempotencyKey, requestHash, 422, body);
+      this.emitWebhook('bank.transfer.updated', body);
+      return { statusCode: 422, body };
     }
 
     const transfer: BankTransfer = {
@@ -436,6 +497,49 @@ export class BankSimulatorEngine {
     return debit;
   }
 
+  listOrdinaryDebits(accountId: string) {
+    if (!this.store.accounts.has(accountId)) {
+      throw new SimulatorHttpError(404, 'Account not found');
+    }
+    return [...this.store.ordinaryDebits.values()].filter((d) => d.accountId === accountId);
+  }
+
+  listInterestPayments(helocIdOrAccountId: string): InterestPaymentView[] {
+    const heloc = this.requireHeloc(helocIdOrAccountId);
+    const charges = [...this.store.interestCharges.values()].filter((c) => c.helocId === heloc.id);
+    const debitByPaymentId = new Map(
+      [...this.store.ordinaryDebits.values()]
+        .filter((d) => d.relatedInterestPaymentId != null)
+        .map((d) => [d.relatedInterestPaymentId as string, d]),
+    );
+    const views: InterestPaymentView[] = [];
+    for (const charge of charges) {
+      const payment = [...this.store.interestPayments.values()].find(
+        (p) => p.chargeId === charge.id,
+      );
+      if (!payment) {
+        continue;
+      }
+      const debit = debitByPaymentId.get(payment.id) ?? null;
+      views.push({
+        chargeId: charge.id,
+        providerChargeId: charge.providerChargeId,
+        interestPeriod: charge.interestPeriod,
+        chargeState: charge.state,
+        chargeAmountCents: charge.amountCents,
+        paymentId: payment.id,
+        providerPaymentId: payment.providerPaymentId,
+        paymentState: payment.state,
+        ordinaryAccountId: payment.ordinaryAccountId,
+        debitId: debit?.id ?? null,
+        amountCents: payment.amountCents,
+        failureCode: payment.failureCode,
+        settledAt: payment.settledAt,
+      });
+    }
+    return views;
+  }
+
   listAccountTransactions(accountId: string) {
     if (!this.store.accounts.has(accountId)) {
       throw new SimulatorHttpError(404, 'Account not found');
@@ -458,13 +562,13 @@ export class BankSimulatorEngine {
     ordinaryAccountId: string;
   }): { charge: InterestCharge; paymentId: string } {
     const scenario = this.requireScenario();
-    this.requireHeloc(input.helocId);
+    const heloc = this.requireHeloc(input.helocId);
     if (!this.store.accounts.has(input.ordinaryAccountId)) {
       throw new SimulatorHttpError(404, 'Ordinary account not found');
     }
     const charge: InterestCharge = {
       id: randomUUID(),
-      helocId: input.helocId,
+      helocId: heloc.id,
       providerChargeId: `int_${randomUUID()}`,
       interestPeriod: input.interestPeriod,
       amountCents: input.amountCents,
@@ -548,6 +652,14 @@ export class BankSimulatorEngine {
     payment.state = 'POSTED';
     payment.postedAt = this.iso();
     this.emitWebhook('mortgage.payment.updated', this.paymentPayload(payment));
+
+    if (this.consumeFailure('REVERSED_AFTER_POSTING')) {
+      payment.state = 'REVERSED';
+      payment.reversedAt = this.iso();
+      this.emitWebhook('mortgage.payment.updated', this.paymentPayload(payment));
+      return;
+    }
+
     this.schedule('MORTGAGE_SETTLE', payment.id, scenario.mortgageSettlementDelayMs, effectiveAtMs);
   }
 
@@ -598,8 +710,7 @@ export class BankSimulatorEngine {
     }
 
     heloc.newlyAvailableCreditCents += payment.principalAmountCents;
-    const available =
-      heloc.existingAvailableCreditCents + heloc.newlyAvailableCreditCents;
+    const available = heloc.existingAvailableCreditCents + heloc.newlyAvailableCreditCents;
     const event = {
       id: randomUUID(),
       helocId: heloc.id,
@@ -631,7 +742,8 @@ export class BankSimulatorEngine {
     const heloc = this.requireHeloc(draw.helocId);
     // Prefer consuming newly available credit first, then existing
     let remaining = draw.amountCents;
-    const fromNew = remaining <= heloc.newlyAvailableCreditCents ? remaining : heloc.newlyAvailableCreditCents;
+    const fromNew =
+      remaining <= heloc.newlyAvailableCreditCents ? remaining : heloc.newlyAvailableCreditCents;
     heloc.newlyAvailableCreditCents -= fromNew;
     remaining -= fromNew;
     heloc.existingAvailableCreditCents -= remaining;
@@ -652,6 +764,12 @@ export class BankSimulatorEngine {
   private settleTransfer(transferId: string): void {
     const transfer = this.store.transfers.get(transferId);
     if (!transfer || transfer.state !== 'PENDING') {
+      return;
+    }
+    if (this.consumeFailure('TRANSFER_REVERSED')) {
+      transfer.state = 'REVERSED';
+      transfer.failureCode = 'TRANSFER_REVERSED';
+      this.emitWebhook('bank.transfer.updated', this.transferPayload(transfer));
       return;
     }
     transfer.state = 'SETTLED';
@@ -686,8 +804,7 @@ export class BankSimulatorEngine {
     }
 
     const nsf =
-      this.consumeFailure('ORDINARY_ACCOUNT_NSF') ||
-      account.balanceCents < payment.amountCents;
+      this.consumeFailure('ORDINARY_ACCOUNT_NSF') || account.balanceCents < payment.amountCents;
 
     if (nsf) {
       payment.state = 'FAILED';
@@ -705,6 +822,7 @@ export class BankSimulatorEngine {
     account.balanceCents -= payment.amountCents;
     payment.state = 'SETTLED';
     payment.settledAt = this.iso();
+    const charge = this.store.interestCharges.get(payment.chargeId);
     const debit = {
       id: randomUUID(),
       accountId: account.id,
@@ -714,6 +832,13 @@ export class BankSimulatorEngine {
       state: 'SETTLED' as const,
       createdAt: this.iso(),
       settledAt: this.iso(),
+      ...(charge
+        ? {
+            interestPeriod: charge.interestPeriod,
+            helocId: charge.helocId,
+            providerPaymentId: payment.providerPaymentId,
+          }
+        : {}),
     };
     this.store.ordinaryDebits.set(debit.id, debit);
     this.store.transactions.push({
@@ -734,7 +859,7 @@ export class BankSimulatorEngine {
   }
 
   private schedule(
-    type: import('./types.js').ScheduledJob['type'],
+    type: ScheduledJob['type'],
     refId: string,
     delayMs: number,
     fromMs = this.clock.nowMs(),
@@ -757,12 +882,21 @@ export class BankSimulatorEngine {
 
     const dropped = this.consumeFailure('DROP_WEBHOOK');
     const malformed = this.consumeFailure('MALFORMED_WEBHOOK');
-    const outOfOrder = scenario?.webhookOutOfOrder === true || this.consumeFailure('OUT_OF_ORDER_WEBHOOK');
+    const outOfOrder =
+      scenario?.webhookOutOfOrder === true || this.consumeFailure('OUT_OF_ORDER_WEBHOOK');
     const duplicate = scenario?.webhookDuplicateDelivery === true;
 
+    const externalAccountId = extractSimulatorExternalAccountId(payload);
+    const providerEventId = buildSimulatorProviderEventId(type, payload);
     const body = malformed
-      ? { broken: true, type }
-      : { type, data: payload, occurredAt: this.iso() };
+      ? { broken: true, type, providerEventId, externalAccountId }
+      : {
+          type,
+          data: payload,
+          occurredAt: this.iso(),
+          providerEventId,
+          externalAccountId,
+        };
     const raw = JSON.stringify(body);
     const signature = createHmac('sha256', this.webhookSigningSecret).update(raw).digest('hex');
 
@@ -778,6 +912,7 @@ export class BankSimulatorEngine {
       dropped,
       signature: `sha256=${signature}`,
       malformed,
+      externalAccountId,
     };
     this.store.webhooks.push(event);
     if (!dropped) {
@@ -803,12 +938,16 @@ export class BankSimulatorEngine {
       return;
     }
     try {
+      const headers: Record<string, string> = {
+        'content-type': 'application/json',
+        'x-bank-sim-signature': event.signature,
+      };
+      if (event.externalAccountId) {
+        headers['x-csm-external-account-id'] = event.externalAccountId;
+      }
       const response = await fetch(this.webhookTargetUrl, {
         method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-bank-sim-signature': event.signature,
-        },
+        headers,
         body: JSON.stringify(event.payload),
       });
       if (!response.ok && event.attempts < 3) {
@@ -860,10 +999,7 @@ export class BankSimulatorEngine {
       return true;
     }
     // Allow matching any remaining occurrence of this step (order-preserving consume)
-    const idx = scenario.deterministicFailureSteps.indexOf(
-      step,
-      this.store.failureStepIndex,
-    );
+    const idx = scenario.deterministicFailureSteps.indexOf(step, this.store.failureStepIndex);
     if (idx === this.store.failureStepIndex) {
       this.store.failureStepIndex += 1;
       return true;
@@ -895,12 +1031,32 @@ export class BankSimulatorEngine {
     return this.store.scenario;
   }
 
-  private requireHeloc(helocId: string): SimHeloc {
-    const heloc = this.store.helocs.get(helocId);
-    if (!heloc) {
+  private requireHeloc(helocIdOrAccountId: string): SimHeloc {
+    const direct = this.store.helocs.get(helocIdOrAccountId);
+    if (direct) {
+      return direct;
+    }
+    const byAccount = [...this.store.helocs.values()].find(
+      (h) => h.accountId === helocIdOrAccountId,
+    );
+    if (!byAccount) {
       throw new SimulatorHttpError(404, 'HELOC not found');
     }
-    return heloc;
+    return byAccount;
+  }
+
+  private requireMortgage(mortgageIdOrAccountId: string): SimMortgage {
+    const direct = this.store.mortgages.get(mortgageIdOrAccountId);
+    if (direct) {
+      return direct;
+    }
+    const byAccount = [...this.store.mortgages.values()].find(
+      (m) => m.accountId === mortgageIdOrAccountId,
+    );
+    if (!byAccount) {
+      throw new SimulatorHttpError(404, 'Mortgage not found');
+    }
+    return byAccount;
   }
 
   private iso(): string {

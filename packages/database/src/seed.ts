@@ -115,14 +115,17 @@ async function seedTenant(
 async function main(): Promise<void> {
   const prisma = createPrismaClient();
   // Wipe seedable tables in dependency order for idempotent local seed
-  await prisma.ledgerEntry.deleteMany();
+  await prisma.dailyReconciliationReport.deleteMany();
   await prisma.reconciliationItem.deleteMany();
   await prisma.reconciliation.deleteMany();
+  await prisma.ledgerEntry.deleteMany();
   await prisma.investmentFill.deleteMany();
   await prisma.investmentOrder.deleteMany();
   await prisma.brokerageDeposit.deleteMany();
   await prisma.moneyMovement.deleteMany();
   await prisma.workflowReference.deleteMany();
+  await prisma.strategySchedule.deleteMany();
+  await prisma.interestCycle.deleteMany();
   await prisma.monthlyConversionCycle.deleteMany();
   await prisma.helocInterestPayment.deleteMany();
   await prisma.helocInterestCharge.deleteMany();

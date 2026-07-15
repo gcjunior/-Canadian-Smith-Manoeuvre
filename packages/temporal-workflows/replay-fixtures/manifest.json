@@ -1,0 +1,24 @@
+{
+  "workflowBundleVersion": "1.0.0",
+  "capturedAt": "2026-07-15T15:19:20.371Z",
+  "format": "temporal.api.history.v1.History protobuf binary (.bin)",
+  "note": "Golden Event Histories for Worker.runReplayHistory. Regenerate only with intentional Workflow command-path changes (UPDATE_REPLAY_FIXTURES=1).",
+  "fixtures": [
+    {
+      "name": "monthly-conversion-happy",
+      "workflowType": "monthlyConversionWorkflow",
+      "description": "Happy-path monthly conversion through reconcile + complete",
+      "capturedAt": "2026-07-15T15:19:20.371Z",
+      "workflowBundleVersion": "1.0.0",
+      "historyFile": "monthly-conversion-happy.bin"
+    },
+    {
+      "name": "heloc-interest-happy",
+      "workflowType": "helocInterestPaymentWorkflow",
+      "description": "Happy-path HELOC interest charge + debit + reconcile",
+      "capturedAt": "2026-07-15T15:19:20.371Z",
+      "workflowBundleVersion": "1.0.0",
+      "historyFile": "heloc-interest-happy.bin"
+    }
+  ]
+}

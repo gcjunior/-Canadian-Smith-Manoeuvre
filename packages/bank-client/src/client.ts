@@ -9,12 +9,15 @@ import {
   providerHelocAvailabilitySchema,
   providerHelocDrawSchema,
   providerInterestChargeSchema,
+  providerInterestPaymentViewSchema,
   providerMortgagePaymentSchema,
   providerOrdinaryDebitSchema,
   providerTransactionSchema,
   providerTransferSchema,
   type ProviderHelocAvailability,
   type ProviderHelocDraw,
+  type ProviderInterestPaymentView,
+  type ProviderOrdinaryDebit,
   type ProviderTransfer,
 } from './schemas.js';
 
@@ -56,11 +59,23 @@ const chargesResponseSchema = z
   })
   .strict();
 
+const ordinaryDebitsResponseSchema = z
+  .object({
+    debits: z.array(providerOrdinaryDebitSchema),
+  })
+  .strict();
+
+const interestPaymentsResponseSchema = z
+  .object({
+    payments: z.array(providerInterestPaymentViewSchema),
+  })
+  .strict();
+
 export class BankClient {
   private readonly http: ProviderHttpClient;
 
   constructor(options: BankClientOptions) {
-    this.http = new ProviderHttpClient(options);
+    this.http = new ProviderHttpClient({ ...options, providerLabel: 'bank' });
   }
 
   async health(correlationId: string) {
@@ -165,7 +180,7 @@ export class BankClient {
   ): Promise<ProviderHelocDraw> {
     const { data } = await this.http.requestJson(
       'GET',
-      `/bank/helocs/${helocId}/draws/by-idempotency-key/${encodeURIComponent(idempotencyKey)}`,
+      `/bank/helocs/${helocId}/draws/by-idempotency-key?key=${encodeURIComponent(idempotencyKey)}`,
       providerHelocDrawSchema,
       { correlationId, operation: 'bank.findHelocDrawByIdempotencyKey', safeToRetry: true },
     );
@@ -237,7 +252,7 @@ export class BankClient {
   async findTransferByIdempotencyKey(idempotencyKey: string, correlationId: string) {
     const { data } = await this.http.requestJson(
       'GET',
-      `/bank/transfers/by-idempotency-key/${encodeURIComponent(idempotencyKey)}`,
+      `/bank/transfers/by-idempotency-key?key=${encodeURIComponent(idempotencyKey)}`,
       providerTransferSchema,
       { correlationId, operation: 'bank.findTransferByIdempotencyKey', safeToRetry: true },
     );
@@ -266,7 +281,11 @@ export class BankClient {
     }
   }
 
-  async getOrdinaryDebit(accountId: string, debitId: string, correlationId: string) {
+  async getOrdinaryDebit(
+    accountId: string,
+    debitId: string,
+    correlationId: string,
+  ): Promise<ProviderOrdinaryDebit> {
     const { data } = await this.http.requestJson(
       'GET',
       `/bank/ordinary-accounts/${accountId}/debits/${debitId}`,
@@ -274,5 +293,31 @@ export class BankClient {
       { correlationId, operation: 'bank.getOrdinaryDebit', safeToRetry: true },
     );
     return data;
+  }
+
+  async listOrdinaryDebits(
+    accountId: string,
+    correlationId: string,
+  ): Promise<ProviderOrdinaryDebit[]> {
+    const { data } = await this.http.requestJson(
+      'GET',
+      `/bank/ordinary-accounts/${accountId}/debits`,
+      ordinaryDebitsResponseSchema,
+      { correlationId, operation: 'bank.listOrdinaryDebits', safeToRetry: true },
+    );
+    return data.debits;
+  }
+
+  async listInterestPayments(
+    helocId: string,
+    correlationId: string,
+  ): Promise<ProviderInterestPaymentView[]> {
+    const { data } = await this.http.requestJson(
+      'GET',
+      `/bank/helocs/${helocId}/interest-payments`,
+      interestPaymentsResponseSchema,
+      { correlationId, operation: 'bank.listInterestPayments', safeToRetry: true },
+    );
+    return data.payments;
   }
 }

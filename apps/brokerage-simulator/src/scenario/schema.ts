@@ -47,7 +47,11 @@ export const brokerageScenarioConfigSchema = z
   .strict()
   .superRefine((value, ctx) => {
     if (value.mode === 'demo' && value.seed === undefined) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'demo mode requires seed', path: ['seed'] });
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'demo mode requires seed',
+        path: ['seed'],
+      });
     }
   });
 

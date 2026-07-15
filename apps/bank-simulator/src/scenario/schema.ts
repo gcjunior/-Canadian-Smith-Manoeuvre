@@ -10,9 +10,15 @@ export const deterministicFailureStepSchema = z.enum([
   'TIMEOUT_AFTER_SUCCESS',
   'DUPLICATE_REQUEST',
   'INSUFFICIENT_HELOC_CREDIT',
+  'HELOC_BLOCKED',
+  'HELOC_DELINQUENT',
+  'DRAW_REJECTED',
+  'TRANSFER_REJECTED',
+  'TRANSFER_REVERSED',
   'ORDINARY_ACCOUNT_NSF',
   'DELAYED_SETTLEMENT',
   'REVERSED_MORTGAGE_PAYMENT',
+  'REVERSED_AFTER_POSTING',
   'STALE_AVAILABILITY',
   'MALFORMED_WEBHOOK',
   'DROP_WEBHOOK',
@@ -50,7 +56,11 @@ export const bankScenarioConfigSchema = z
   .strict()
   .superRefine((value, ctx) => {
     if (value.mode === 'demo' && value.seed === undefined) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'demo mode requires seed', path: ['seed'] });
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'demo mode requires seed',
+        path: ['seed'],
+      });
     }
   });
 
