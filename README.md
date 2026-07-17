@@ -106,6 +106,31 @@ pnpm --filter @csm/demo seed -- --scenario edmonton-demo
 | Postgres | `localhost:5432` |
 | Temporal gRPC | `localhost:7233` |
 
+### Host-process alternative (optional)
+
+```bash
+docker compose up -d postgres temporal temporal-ui
+pnpm db:migrate:deploy
+pnpm --filter @csm/bank-simulator dev   # :3002
+pnpm --filter @csm/brokerage-simulator dev  # :3003
+pnpm --filter @csm/api dev              # :3001
+pnpm --filter @csm/worker dev           # :3100
+pnpm --filter @csm/web dev              # :3000
+```
+
+### Stop
+
+```bash
+docker compose down          # keep data
+docker compose down -v       # wipe Postgres volume
+```
+
+Baby-step browser guides (below):
+
+- [Run the app in the browser](#baby-steps-run-the-app-in-the-browser)
+- [Run Temporal in the browser](#baby-steps-run-temporal-in-the-browser)
+- [Trigger a specific mortgage → HELOC conversion right away](#baby-steps-trigger-a-specific-mortgage--heloc-conversion-right-away)
+
 ---
 
 ## Baby steps: run the app in the browser
@@ -294,24 +319,189 @@ Only if you know the IDs from seed output:
 
 Prefer **Schedule → Trigger** for day-to-day testing; it matches production kickoff behavior.
 
-### Host-process alternative (optional)
+---
+
+## Baby steps: trigger a specific mortgage → HELOC conversion right away
+
+Use this when you want **one household’s** mortgage paydown to unlock HELOC credit and invest **now**, without waiting for **Next expected check**.
+
+You need three things working together:
+
+1. **Product UI** — which strategy / household  
+2. **Bank sim clock** — mortgage posted + settled + HELOC readvanced  
+3. **Temporal UI** — start the workflow for that strategy immediately  
+
+### Step 0 — Start the stack (if it is not already running)
 
 ```bash
-docker compose up -d postgres temporal temporal-ui
-pnpm db:migrate:deploy
-pnpm --filter @csm/bank-simulator dev   # :3002
-pnpm --filter @csm/brokerage-simulator dev  # :3003
-pnpm --filter @csm/api dev              # :3001
-pnpm --filter @csm/worker dev           # :3100
-pnpm --filter @csm/web dev              # :3000
+docker compose up --build -d
 ```
 
-### Stop
+Wait until these are healthy:
 
 ```bash
-docker compose down          # keep data
-docker compose down -v       # wipe Postgres volume
+curl -sf http://localhost:3001/ready && echo
+curl -sf http://localhost:3100/health && echo
+curl -sf -o /dev/null -w 'web:%{http_code}\n' http://localhost:3000/
 ```
+
+### Step 1 — Create / refresh the specific mortgage + HELOC (Edmonton demo)
+
+This wipes app financial tables and recreates **one** demo household with linked mortgage, HELOC, ordinary chequing, and brokerage:
+
+```bash
+pnpm --filter @csm/demo seed -- --scenario edmonton-demo
+```
+
+In the JSON output, copy these two values (you will need them):
+
+- `tenantId`
+- `strategyId`
+
+Example shape:
+
+```json
+{
+  "seed": {
+    "tenantId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    "strategyId": "11111111-2222-3333-4444-555555555555",
+    "mortgageFacilityId": "...",
+    "helocFacilityId": "..."
+  }
+}
+```
+
+That `strategyId` is the **specific** mortgage/HELOC automation you will trigger.
+
+### Step 2 — Confirm the strategy in the browser
+
+1. Open **http://localhost:3000/login**.
+2. Sign in as **Edmonton Demo Household** / **Pat Edmonton** / **Customer**.
+3. Open **Dashboard** → confirm **Automation active**.
+4. Open **Strategy** → note the name (e.g. Edmonton Smith Manoeuvre) and that it is Active.
+5. Open **Settings** → confirm **Tenant** matches the `tenantId` from seed (optional sanity check).
+
+You are now looking at the correct mortgage/HELOC strategy in the product UI.
+
+### Step 3 — Advance that mortgage/HELOC in the simulator (required)
+
+Temporal alone cannot invent a settled mortgage. Drive the bank sim for this seeded household:
+
+```bash
+pnpm --filter @csm/demo scenario -- --scenario edmonton-demo --keepAlive
+```
+
+Leave this terminal running. It:
+
+1. Re-seeds the Edmonton mortgage/HELOC/brokerage  
+2. Schedules the mortgage payment  
+3. Advances simulated time through **posted → settled → HELOC readvanced**  
+4. Keeps a settlement driver alive for draw/deposit completion  
+
+Watch for phase lines such as `phase=mortgage_posted`, `phase=mortgage_settled`, then readvance.
+
+### Step 4 — Find the Schedule for that specific strategy in Temporal
+
+1. Open **http://localhost:8080**.
+2. Click **Schedules** (left sidebar).
+3. Find the row whose ID is exactly:
+
+```text
+monthly-conversion-schedule/{tenantId}/{strategyId}
+```
+
+Replace `{tenantId}` / `{strategyId}` with the values from Step 1.
+
+Example:
+
+```text
+monthly-conversion-schedule/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/11111111-2222-3333-4444-555555555555
+```
+
+4. Click that row only (do not trigger a different household’s schedule).
+5. Confirm the schedule is **not paused**.
+
+Tip: if many schedules exist, paste part of your `strategyId` into the Schedules search/filter box.
+
+### Step 5 — Trigger Temporal right away for that mortgage/HELOC
+
+1. On that schedule’s detail page, click **Trigger** (or **Trigger now**).
+2. Confirm when the UI asks.
+3. Click **Workflows** in the left sidebar.
+4. Refresh.
+
+Within a few seconds you should see:
+
+| Workflow ID / type | What it means for this mortgage/HELOC |
+| ------------------ | ------------------------------------- |
+| `...monthlyConversionScheduleKickoff` (Completed) | Temporal accepted your “run now” request |
+| `monthly-conversion/{tenantId}/{strategyId}/{YYYY-MM}` | Conversion for **this** strategy’s payment period |
+
+Click the `monthly-conversion/...` workflow:
+
+1. Check **Input** → `strategyId` must match Step 1.  
+2. Watch **History** as activities poll mortgage settlement, then HELOC draw / transfer / invest.  
+3. Status should move to **Completed** while the `--keepAlive` scenario terminal is still running.
+
+### Step 6 — See the mortgage → HELOC result in the product UI
+
+1. Open **http://localhost:3000** (Customer session).
+2. **Dashboard** → expect roughly:
+   - Latest mortgage payment ≈ **$2,400**
+   - Principal repaid ≈ **$770**
+   - Latest amount borrowed ≈ **$770**
+   - Latest amount invested ≈ **$770**
+   - **Latest cycle status → Completed**
+3. **Activity** → one row for the payment period (often `2026-07`) with **Completed**.
+4. Optional: sign in as **Operations** → **Cycles** → **Open** that period → inspect provider IDs and Temporal link for this strategy.
+
+### If the workflow Failed immediately
+
+| Error you see in Temporal | What to do |
+| ------------------------- | ---------- |
+| Mortgage not found / not settled | Run Step 3 (`demo scenario --keepAlive`) **before** or again after trigger |
+| HELOC not found / insufficient credit | Same — wait until readvance phases finish, then **Trigger** again |
+| Wrong tenant/strategy in Input | You triggered a different schedule — repeat Step 4 with your `strategyId` |
+| Workflow already completed for that period | Workflow ID is unique per period; start a fresh seed or use the next period |
+
+### Alternate: trigger from the terminal (same specific schedule)
+
+If you prefer not to click Trigger in the UI:
+
+```bash
+docker compose exec temporal temporal schedule trigger \
+  --address temporal:7233 -n default \
+  --schedule-id 'monthly-conversion-schedule/<tenantId>/<strategyId>'
+```
+
+Then watch **http://localhost:8080** → **Workflows**.
+
+### Alternate: Start Workflow form for that exact mortgage/HELOC period
+
+Use only when you must pin period `2026-07` yourself:
+
+1. Temporal UI → **Workflows** → **Start Workflow**.
+2. Workflow Type: `monthlyConversionWorkflow`
+3. Task Queue: `smith-manoeuvre`
+4. Workflow ID: `monthly-conversion/<tenantId>/<strategyId>/2026-07`
+5. Input (JSON array):
+
+```json
+[
+  {
+    "tenantId": "<from seed Step 1>",
+    "strategyId": "<from seed Step 1>",
+    "paymentPeriod": "2026-07",
+    "expectedPaymentDate": "2026-07-01",
+    "timezone": "America/Edmonton",
+    "simulatorScenarioId": "edmonton-demo"
+  }
+]
+```
+
+6. Start → confirm **Input.strategyId** matches your household → keep `demo scenario --keepAlive` running until **Completed**.
+
+**Recommended path for most users:** Step 1 → 3 → 4 → 5 (Schedule **Trigger**), not the Start Workflow form.
 
 ---
 
