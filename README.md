@@ -106,6 +106,194 @@ pnpm --filter @csm/demo seed -- --scenario edmonton-demo
 | Postgres | `localhost:5432` |
 | Temporal gRPC | `localhost:7233` |
 
+---
+
+## Baby steps: run the app in the browser
+
+Do this after `docker compose up --build -d` and (for the demo household) after seeding.
+
+### Before you click anything
+
+1. Wait ~1–2 minutes after Compose starts so API, web, and worker become healthy.
+2. In a terminal, confirm the web app answers:
+
+```bash
+curl -sf http://localhost:3000/api/health
+```
+
+You should see JSON with `"status":"ok"`.
+
+3. Seed the demo (if you have not already):
+
+```bash
+pnpm --filter @csm/demo seed -- --scenario edmonton-demo
+```
+
+Keep the printed `tenantId` / `strategyId` if you will use Temporal later.
+
+### Open the product UI
+
+1. Open Chrome / Safari / Firefox.
+2. Go to **http://localhost:3000**.
+3. You should see the landing page titled **Canadian Smith Manoeuvre** with a leverage disclosure and two buttons: **Sign in** and **Operations**.
+4. Click **Sign in**.
+
+### Sign in as the demo customer
+
+1. On **http://localhost:3000/login**, the form should list households (not an error box).
+2. **Simulated household** → choose **Edmonton Demo Household (edmonton-demo)**.
+3. **User** → choose **Pat Edmonton — pat.edmonton@example.ca**.
+4. **Role** → select **Customer**.
+5. Click **Sign in**.
+6. You land on the **Dashboard**.
+
+What “good” looks like on the Dashboard:
+
+- Badge: **Automation active**
+- ETF mentioned (e.g. **XEQT**)
+- Metrics may still be empty (`—` / `$0.00`) until a conversion workflow finishes
+- **Next expected check** is informational only (you do not edit it)
+
+### Click around the customer pages (top nav)
+
+| Click | What you should see |
+| ----- | ------------------- |
+| **Dashboard** | Strategy overview + automation metrics |
+| **Strategy** | ETF, monthly cap, timezone, Pause / Resume |
+| **Activity** | Monthly cycles (empty until a conversion runs) |
+| **Interest** | HELOC interest history (empty until interest workflow runs) |
+| **Documents** | Document placeholders / list |
+| **Settings** | Your session identity (name, email, roles, tenant) |
+| **Onboarding** | Optional wizard (bank → brokerage → ETF → activate) |
+| **Sign out** | Returns you to the public landing / login flow |
+
+### Sign in as Operations (same browser)
+
+1. Click **Sign out** (or open http://localhost:3000 again).
+2. Click **Operations** on the home page, **or** open http://localhost:3000/login?role=OPERATIONS.
+3. Pick the same **Edmonton Demo Household** / **Pat Edmonton**.
+4. Role → **Operations**.
+5. Click **Sign in** → you land on **Operations · Cycles**.
+
+Ops nav pages:
+
+| Click | Purpose |
+| ----- | ------- |
+| **Cycles** | Open a cycle row → provider trail, amounts, Temporal link |
+| **Exceptions** | Open operational exceptions |
+| **Webhooks** | Inbound provider webhook events |
+| **Reconciliation** | Recon items for cycles |
+| **Workflows** | Temporal workflow references for the tenant |
+
+If login shows **fetch failed** / **Start the API and seed data**, go back to Compose health and re-seed (see gotchas below).
+
+---
+
+## Baby steps: run Temporal in the browser
+
+Temporal UI is a separate website from the product app. Use it to **see** and **start** workflows without waiting for the next calendar month.
+
+### Open Temporal UI
+
+1. Make sure Compose is up (`docker compose up -d` if needed).
+2. Open **http://localhost:8080** in your browser.
+3. You should see the Temporal Web UI for namespace **default**.
+
+If the page does not load, Temporal is not ready yet — wait and refresh, or check:
+
+```bash
+docker compose ps temporal temporal-ui
+```
+
+### Find your Schedules (baby steps)
+
+1. In the left sidebar, click **Schedules**.
+2. You should see rows like:
+   - `monthly-conversion-schedule/{tenantId}/{strategyId}`
+   - `heloc-interest-schedule/{tenantId}/{strategyId}`
+3. Click the **monthly-conversion** schedule row to open its detail page.
+4. Confirm:
+   - **Paused** = false / not paused
+   - **Task Queue** related action uses `smith-manoeuvre`
+   - **Next run** may be weeks away — that is normal
+
+### Trigger a conversion now (do not wait for the calendar)
+
+1. Stay on the monthly-conversion schedule detail page.
+2. Find and click **Trigger** (sometimes labeled **Trigger now** / run action in the schedule menu).
+3. Confirm the trigger when asked.
+4. Go to **Workflows** in the left sidebar.
+5. Refresh the list.
+
+You should soon see two related runs:
+
+| Workflow type | Typical status | Meaning |
+| ------------- | -------------- | ------- |
+| `monthlyConversionScheduleKickoff` | **Completed** in ~1s | Schedule successfully started the child |
+| `monthlyConversionWorkflow` | Running → later **Completed** or **Failed** | Real conversion work |
+
+### Inspect a workflow (baby steps)
+
+1. In **Workflows**, click the `monthlyConversionWorkflow` row (ID starts with `monthly-conversion/...`).
+2. Read the top status badge (**Running** / **Completed** / **Failed**).
+3. Open the **History** tab — scroll events from bottom (oldest) to top (newest).
+4. Open **Input** — you should see `tenantId`, `strategyId`, `paymentPeriod` (often `2026-07` for Edmonton).
+5. If **Failed**, open the failure / last activity error (common first-time message: mortgage not settled yet).
+
+### Feed the bank simulator so the workflow can finish
+
+The Temporal UI starts the workflow; the **bank/brokerage sims** must still have a settled mortgage + HELOC readvance.
+
+In a terminal (leave it open):
+
+```bash
+pnpm --filter @csm/demo scenario -- --scenario edmonton-demo --keepAlive
+```
+
+Then:
+
+1. Return to Temporal UI → **Workflows**.
+2. Refresh until `monthlyConversionWorkflow` is **Completed**.
+3. Return to the product UI at **http://localhost:3000** → sign in as Customer → **Dashboard**.
+4. Expect borrowed / invested ≈ **$770** and **Latest cycle status → Completed**.
+
+### Optional: trigger HELOC interest in the browser
+
+1. Temporal UI → **Schedules**.
+2. Open `heloc-interest-schedule/{tenantId}/{strategyId}`.
+3. Click **Trigger**.
+4. Watch **Workflows** for:
+   - `helocInterestScheduleKickoff` → Completed
+   - `helocInterestPaymentWorkflow` → Completed (after interest is posted/settled in the sim)
+
+### Optional: start a workflow manually (advanced)
+
+Only if you know the IDs from seed output:
+
+1. Temporal UI → **Workflows** → **Start Workflow**.
+2. Fill roughly:
+   - **Workflow Type:** `monthlyConversionWorkflow`
+   - **Task Queue:** `smith-manoeuvre`
+   - **Workflow ID:** `monthly-conversion/{tenantId}/{strategyId}/2026-07`
+   - **Input:** a JSON **array** with one object:
+
+```json
+[
+  {
+    "tenantId": "<from seed>",
+    "strategyId": "<from seed>",
+    "paymentPeriod": "2026-07",
+    "expectedPaymentDate": "2026-07-01",
+    "timezone": "America/Edmonton",
+    "simulatorScenarioId": "edmonton-demo"
+  }
+]
+```
+
+3. Click start, then watch **History**.
+
+Prefer **Schedule → Trigger** for day-to-day testing; it matches production kickoff behavior.
+
 ### Host-process alternative (optional)
 
 ```bash
